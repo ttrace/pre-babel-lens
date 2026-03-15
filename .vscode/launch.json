@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:champollion-deck}",
+            "name": "Debug ChampollionDeckApp",
+            "target": "ChampollionDeckApp",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug ChampollionDeckApp"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:champollion-deck}",
+            "name": "Release ChampollionDeckApp",
+            "target": "ChampollionDeckApp",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release ChampollionDeckApp"
+        }
+    ]
+}
