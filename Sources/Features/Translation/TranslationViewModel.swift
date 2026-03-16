@@ -4,6 +4,7 @@ import Foundation
 final class TranslationViewModel: ObservableObject {
     @Published var sourceLanguage: String = "en"
     @Published var targetLanguage: String = "ja"
+    @Published var experimentMode: TranslationExperimentMode = .segmentedGlossaryProtected
     @Published var inputText: String = ""
     @Published var glossaryText: String = ""
 
@@ -27,7 +28,8 @@ final class TranslationViewModel: ObservableObject {
             sourceLanguage: sourceLanguage,
             targetLanguage: targetLanguage,
             text: inputText,
-            glossary: parseGlossary(glossaryText)
+            glossary: parseGlossary(glossaryText),
+            experimentMode: experimentMode
         )
 
         guard !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

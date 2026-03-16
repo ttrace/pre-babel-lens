@@ -6,7 +6,7 @@ struct ChampollionDeckApp: App {
 
     init() {
         let preprocess = DeterministicPreprocessEngine()
-        let translationEngine = StubFoundationModelsTranslationEngine()
+        let translationEngine = FoundationModelsTranslationEngine()
         let policy = FixedTranslationEnginePolicy(engine: translationEngine)
 
         self.viewModel = TranslationViewModel(

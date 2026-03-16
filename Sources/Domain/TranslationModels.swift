@@ -1,10 +1,45 @@
 import Foundation
 
+enum TranslationExperimentMode: String, CaseIterable, Equatable, Sendable, Identifiable {
+    case rawInput
+    case segmented
+    case segmentedGlossary
+    case segmentedGlossaryProtected
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .rawInput:
+            return "Raw Input"
+        case .segmented:
+            return "Segmented"
+        case .segmentedGlossary:
+            return "Segmented + Glossary"
+        case .segmentedGlossaryProtected:
+            return "Segmented + Glossary + Protected"
+        }
+    }
+
+    var usesSegmentation: Bool {
+        self != .rawInput
+    }
+
+    var usesGlossary: Bool {
+        self == .segmentedGlossary || self == .segmentedGlossaryProtected
+    }
+
+    var usesProtectedTokens: Bool {
+        self == .segmentedGlossaryProtected
+    }
+}
+
 struct TranslationRequest: Equatable {
     var sourceLanguage: String
     var targetLanguage: String
     var text: String
     var glossary: [GlossaryEntry]
+    var experimentMode: TranslationExperimentMode = .segmentedGlossaryProtected
 }
 
 struct GlossaryEntry: Hashable, Equatable {

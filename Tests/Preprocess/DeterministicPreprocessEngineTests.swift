@@ -49,4 +49,38 @@ struct DeterministicPreprocessEngineTests {
         #expect(result.input.glossaryMatches[0].source == "Settings")
         #expect(result.input.glossaryMatches[0].target == "設定")
     }
+
+    @Test
+    func rawInputModeDisablesSegmentationAndOptionalEnhancements() {
+        let request = TranslationRequest(
+            sourceLanguage: "en",
+            targetLanguage: "ja",
+            text: "First sentence. Second sentence.",
+            glossary: [GlossaryEntry(source: "First", target: "最初")],
+            experimentMode: .rawInput
+        )
+
+        let result = DeterministicPreprocessEngine().analyze(request)
+
+        #expect(result.input.segments.count == 1)
+        #expect(result.input.protectedTokens.isEmpty)
+        #expect(result.input.glossaryMatches.isEmpty)
+    }
+
+    @Test
+    func segmentedGlossaryModeAppliesGlossaryWithoutProtectedExtraction() {
+        let request = TranslationRequest(
+            sourceLanguage: "en",
+            targetLanguage: "ja",
+            text: "Settings and https://example.com.",
+            glossary: [GlossaryEntry(source: "Settings", target: "設定")],
+            experimentMode: .segmentedGlossary
+        )
+
+        let result = DeterministicPreprocessEngine().analyze(request)
+
+        #expect(result.input.segments.count == 1)
+        #expect(result.input.glossaryMatches.count == 1)
+        #expect(result.input.protectedTokens.isEmpty)
+    }
 }

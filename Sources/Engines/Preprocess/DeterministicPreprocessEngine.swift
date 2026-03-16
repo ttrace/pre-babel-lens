@@ -5,30 +5,39 @@ struct DeterministicPreprocessEngine: PreprocessEngine {
 
     func analyze(_ request: TranslationRequest) -> (input: TranslationInput, traces: [PreprocessTrace]) {
         var traces: [PreprocessTrace] = []
-
-        let segments = SentenceSegmenter.segment(request.text)
         traces.append(
-            PreprocessTrace(step: "sentence-segmentation", summary: "segments=\\(segments.count)")
+            PreprocessTrace(step: "experiment-mode", summary: request.experimentMode.rawValue)
         )
 
-        let protectedTokens = ProtectedTokenExtractor.extract(from: request.text)
+        let segments = request.experimentMode.usesSegmentation
+            ? SentenceSegmenter.segment(request.text)
+            : RawInputSegmenter.segment(request.text)
         traces.append(
-            PreprocessTrace(step: "protected-token-extraction", summary: "tokens=\\(protectedTokens.count)")
+            PreprocessTrace(step: "sentence-segmentation", summary: "segments=\(segments.count)")
         )
 
-        let glossaryMatches = GlossaryMatcher.match(glossary: request.glossary, in: request.text)
+        let protectedTokens = request.experimentMode.usesProtectedTokens
+            ? ProtectedTokenExtractor.extract(from: request.text)
+            : []
         traces.append(
-            PreprocessTrace(step: "glossary-application", summary: "matches=\\(glossaryMatches.count)")
+            PreprocessTrace(step: "protected-token-extraction", summary: "tokens=\(protectedTokens.count)")
+        )
+
+        let glossaryMatches = request.experimentMode.usesGlossary
+            ? GlossaryMatcher.match(glossary: request.glossary, in: request.text)
+            : []
+        traces.append(
+            PreprocessTrace(step: "glossary-application", summary: "matches=\(glossaryMatches.count)")
         )
 
         let ambiguityHints = AmbiguityHintDetector.detect(in: request.text)
         traces.append(
-            PreprocessTrace(step: "ambiguity-hinting", summary: "hints=\\(ambiguityHints.count)")
+            PreprocessTrace(step: "ambiguity-hinting", summary: "hints=\(ambiguityHints.count)")
         )
 
         let formatting = FormattingInspector.inspect(request.text)
         traces.append(
-            PreprocessTrace(step: "formatting-preservation", summary: "newlines=\\(formatting.newlineCount)")
+            PreprocessTrace(step: "formatting-preservation", summary: "newlines=\(formatting.newlineCount)")
         )
 
         return (
@@ -44,6 +53,14 @@ struct DeterministicPreprocessEngine: PreprocessEngine {
             ),
             traces
         )
+    }
+}
+
+enum RawInputSegmenter {
+    static func segment(_ text: String) -> [TextSegment] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        return [TextSegment(index: 0, text: trimmed)]
     }
 }
 

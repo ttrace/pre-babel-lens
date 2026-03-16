@@ -18,6 +18,17 @@ struct TranslationView: View {
                 .disabled(viewModel.isTranslating)
             }
 
+            HStack(spacing: 12) {
+                Text("Experiment")
+                Picker("Experiment", selection: $viewModel.experimentMode) {
+                    ForEach(TranslationExperimentMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+                Spacer()
+            }
+
             GroupBox("Input") {
                 TextEditor(text: $viewModel.inputText)
                     .frame(minHeight: 120)
@@ -39,6 +50,7 @@ struct TranslationView: View {
             GroupBox("Analysis") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Engine: \(viewModel.engineName.isEmpty ? "(none)" : viewModel.engineName)")
+                    Text("Mode: \(viewModel.experimentMode.displayName)")
                     Text("Protected tokens: \(viewModel.protectedTokens.count)")
                     Text("Glossary matches: \(viewModel.glossaryMatches.count)")
                     Text("Ambiguity hints: \(viewModel.ambiguityHints.count)")
