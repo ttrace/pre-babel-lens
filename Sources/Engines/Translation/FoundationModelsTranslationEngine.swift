@@ -6,15 +6,10 @@ struct FoundationModelsTranslationEngine: TranslationEngine {
         if #available(macOS 26.0, iOS 26.0, *) {
             return "foundation-models"
         }
-        return "foundation-models-fallback(os-unavailable)"
+        return "foundation-models-unavailable(os)"
 #else
-        return "foundation-models-fallback(module-unavailable)"
+        return "foundation-models-unavailable(toolchain)"
 #endif
-    }
-    private let fallbackEngine: any TranslationEngine
-
-    init(fallbackEngine: any TranslationEngine = StubFoundationModelsTranslationEngine()) {
-        self.fallbackEngine = fallbackEngine
     }
 
     func translate(_ input: TranslationInput) async throws -> [SegmentOutput] {
@@ -23,7 +18,18 @@ struct FoundationModelsTranslationEngine: TranslationEngine {
             return try await FoundationModelsRuntimeTranslator.translate(input)
         }
 #endif
-        return try await fallbackEngine.translate(input)
+        throw FoundationModelsIntegrationError.missingFoundationModelsToolchain
+    }
+}
+
+private enum FoundationModelsIntegrationError: LocalizedError {
+    case missingFoundationModelsToolchain
+
+    var errorDescription: String? {
+        switch self {
+        case .missingFoundationModelsToolchain:
+            return "Foundation Models is unavailable in the current build toolchain. Build with Xcode toolchain and retry."
+        }
     }
 }
 

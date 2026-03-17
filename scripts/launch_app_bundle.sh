@@ -6,10 +6,18 @@ EXECUTABLE_PATH=".build/arm64-apple-macosx/debug/${APP_NAME}"
 BUNDLE_DIR=".build/AppBundle/${APP_NAME}.app"
 MACOS_DIR="${BUNDLE_DIR}/Contents/MacOS"
 INFO_PLIST="${BUNDLE_DIR}/Contents/Info.plist"
+XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+
+if [[ -d "${XCODE_DEVELOPER_DIR}" ]]; then
+  echo "Building with Xcode toolchain..."
+  DEVELOPER_DIR="${XCODE_DEVELOPER_DIR}" swift build
+else
+  echo "warning: Xcode not found at ${XCODE_DEVELOPER_DIR}; using current toolchain."
+  swift build
+fi
 
 if [[ ! -x "${EXECUTABLE_PATH}" ]]; then
-  echo "error: executable not found: ${EXECUTABLE_PATH}"
-  echo "hint: run 'swift build' first"
+  echo "error: executable not found after build: ${EXECUTABLE_PATH}"
   exit 1
 fi
 

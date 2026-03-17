@@ -2,8 +2,7 @@ import Foundation
 
 @MainActor
 final class TranslationViewModel: ObservableObject {
-    @Published var sourceLanguage: String = "en"
-    @Published var targetLanguage: String = "ja"
+    @Published var targetLanguage: String
     @Published var experimentMode: TranslationExperimentMode = .segmentedGlossaryProtected
     @Published var inputText: String = ""
     @Published var glossaryText: String = ""
@@ -14,18 +13,28 @@ final class TranslationViewModel: ObservableObject {
     @Published var glossaryMatches: [GlossaryMatch] = []
     @Published var ambiguityHints: [AmbiguityHint] = []
     @Published var engineName: String = ""
+    @Published var detectedLanguageCode: String = ""
+    @Published var aiLanguageSupported: Bool = true
     @Published var isTranslating: Bool = false
     @Published var errorMessage: String?
 
+    let targetLanguageOptions: [TargetLanguageOption]
     private let orchestrator: TranslationOrchestrator
 
     init(orchestrator: TranslationOrchestrator) {
+        let options = AppleIntelligenceLanguageCatalog.supportedLanguageOptions()
+        self.targetLanguageOptions = options
+        if options.contains(where: { $0.code == "ja" }) {
+            self.targetLanguage = "ja"
+        } else {
+            self.targetLanguage = options.first?.code ?? "en"
+        }
         self.orchestrator = orchestrator
     }
 
     func translate() async {
         let request = TranslationRequest(
-            sourceLanguage: sourceLanguage,
+            sourceLanguage: "und",
             targetLanguage: targetLanguage,
             text: inputText,
             glossary: parseGlossary(glossaryText),
@@ -39,6 +48,8 @@ final class TranslationViewModel: ObservableObject {
             glossaryMatches = []
             ambiguityHints = []
             engineName = ""
+            detectedLanguageCode = ""
+            aiLanguageSupported = true
             errorMessage = nil
             return
         }
@@ -54,7 +65,15 @@ final class TranslationViewModel: ObservableObject {
             glossaryMatches = output.analysis.input.glossaryMatches
             ambiguityHints = output.analysis.input.ambiguityHints
             engineName = output.analysis.engineName
+            detectedLanguageCode = output.analysis.input.detectedLanguageCode ?? ""
+            aiLanguageSupported = output.analysis.input.isDetectedLanguageSupportedByAppleIntelligence
             errorMessage = nil
+        } catch let pipelineError as TranslationPipelineError {
+            if let detected = pipelineError.detectedLanguageCode {
+                detectedLanguageCode = detected
+                aiLanguageSupported = false
+            }
+            errorMessage = pipelineError.localizedDescription
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -51,6 +51,8 @@ struct TranslationInput: Equatable {
     var sourceLanguage: String
     var targetLanguage: String
     var originalText: String
+    var detectedLanguageCode: String? = nil
+    var isDetectedLanguageSupportedByAppleIntelligence: Bool = true
     var segments: [TextSegment]
     var protectedTokens: [ProtectedToken]
     var glossaryMatches: [GlossaryMatch]
