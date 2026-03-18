@@ -22,8 +22,8 @@ struct TranslationView: View {
         ZStack {
             LinearGradient(
                 colors: [
-                    Color(red: 0.98, green: 0.92, blue: 0.82).opacity(0.9),
-                    Color(red: 0.93, green: 0.90, blue: 0.88).opacity(0.9),
+                    Color(red: 0.98, green: 0.92, blue: 0.82).opacity(0.98),
+                    Color(red: 0.93, green: 0.90, blue: 0.88).opacity(0.98),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
