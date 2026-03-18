@@ -54,6 +54,8 @@ struct TranslationInput: Equatable {
     var detectedLanguageCode: String? = nil
     var isDetectedLanguageSupportedByAppleIntelligence: Bool = true
     var segments: [TextSegment]
+    // Joiner text after each segment (same count as `segments`), used to preserve punctuation/newlines.
+    var segmentJoinersAfter: [String] = []
     var protectedTokens: [ProtectedToken]
     var glossaryMatches: [GlossaryMatch]
     var ambiguityHints: [AmbiguityHint]

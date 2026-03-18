@@ -8,6 +8,7 @@ struct DeterministicPreprocessEngine: PreprocessEngine {
     let name: String = "deterministic-v1"
 
     func analyze(_ request: TranslationRequest) -> (input: TranslationInput, traces: [PreprocessTrace]) {
+        let startedAt = Date()
         var traces: [PreprocessTrace] = []
         traces.append(
             PreprocessTrace(step: "experiment-mode", summary: request.experimentMode.rawValue)
@@ -23,11 +24,11 @@ struct DeterministicPreprocessEngine: PreprocessEngine {
             )
         )
 
-        let segments = request.experimentMode.usesSegmentation
+        let segmentation = request.experimentMode.usesSegmentation
             ? SentenceSegmenter.segment(request.text)
             : RawInputSegmenter.segment(request.text)
         traces.append(
-            PreprocessTrace(step: "sentence-segmentation", summary: "segments=\(segments.count)")
+            PreprocessTrace(step: "sentence-segmentation", summary: "segments=\(segmentation.segments.count)")
         )
 
         let protectedTokens = request.experimentMode.usesProtectedTokens
@@ -54,6 +55,14 @@ struct DeterministicPreprocessEngine: PreprocessEngine {
             PreprocessTrace(step: "formatting-preservation", summary: "newlines=\(formatting.newlineCount)")
         )
 
+        let elapsedMs = Date().timeIntervalSince(startedAt) * 1000
+        traces.append(
+            PreprocessTrace(
+                step: "deterministic-processing-time",
+                summary: String(format: "%.2f ms", elapsedMs)
+            )
+        )
+
         return (
             TranslationInput(
                 sourceLanguage: detectedLanguage,
@@ -61,7 +70,8 @@ struct DeterministicPreprocessEngine: PreprocessEngine {
                 originalText: request.text,
                 detectedLanguageCode: detectedLanguage,
                 isDetectedLanguageSupportedByAppleIntelligence: isSupportedByAppleIntelligence,
-                segments: segments,
+                segments: segmentation.segments,
+                segmentJoinersAfter: segmentation.joinersAfter,
                 protectedTokens: protectedTokens,
                 glossaryMatches: glossaryMatches,
                 ambiguityHints: ambiguityHints,
@@ -150,32 +160,97 @@ enum FoundationModelsHeuristicLanguageDetector {
 }
 
 enum RawInputSegmenter {
-    static func segment(_ text: String) -> [TextSegment] {
+    static func segment(_ text: String) -> SegmentationResult {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-        return [TextSegment(index: 0, text: trimmed)]
+        guard !trimmed.isEmpty else {
+            return SegmentationResult(segments: [], joinersAfter: [])
+        }
+        return SegmentationResult(
+            segments: [TextSegment(index: 0, text: trimmed)],
+            joinersAfter: [""]
+        )
     }
 }
 
 enum SentenceSegmenter {
-    static func segment(_ text: String) -> [TextSegment] {
+    static func segment(_ text: String) -> SegmentationResult {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-
-        let parts = trimmed
-            .replacingOccurrences(of: "\n", with: " ")
-            .split(whereSeparator: { ".!?。！？".contains($0) })
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        if parts.isEmpty {
-            return [TextSegment(index: 0, text: trimmed)]
+        guard !trimmed.isEmpty else {
+            return SegmentationResult(segments: [], joinersAfter: [])
         }
 
-        return parts.enumerated().map { index, value in
-            TextSegment(index: index, text: value)
+        let delimiters = CharacterSet(charactersIn: ".!?。！？")
+        var segments: [TextSegment] = []
+        var joinersAfter: [String] = []
+        var currentSegment = ""
+        var collectingJoiner = false
+        var insideURL = false
+
+        for scalar in trimmed.unicodeScalars {
+            let character = Character(scalar)
+            let isDelimiter = delimiters.contains(scalar)
+            let isWhitespace = CharacterSet.whitespacesAndNewlines.contains(scalar)
+
+            if collectingJoiner {
+                if isDelimiter || isWhitespace {
+                    if !joinersAfter.isEmpty {
+                        joinersAfter[joinersAfter.count - 1].append(character)
+                    }
+                    continue
+                }
+                collectingJoiner = false
+                currentSegment.append(character)
+                continue
+            }
+
+            if insideURL {
+                currentSegment.append(character)
+                if isWhitespace {
+                    insideURL = false
+                }
+                continue
+            }
+
+            if isDelimiter {
+                let segmentText = currentSegment.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !segmentText.isEmpty {
+                    segments.append(TextSegment(index: segments.count, text: segmentText))
+                    joinersAfter.append(String(character))
+                    currentSegment = ""
+                    collectingJoiner = true
+                } else if !joinersAfter.isEmpty {
+                    joinersAfter[joinersAfter.count - 1].append(character)
+                }
+                continue
+            }
+
+            currentSegment.append(character)
+            let lowered = currentSegment.lowercased()
+            if lowered.hasSuffix("http://") || lowered.hasSuffix("https://") {
+                insideURL = true
+            }
         }
+
+        let trailingSegment = currentSegment.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trailingSegment.isEmpty {
+            segments.append(TextSegment(index: segments.count, text: trailingSegment))
+            joinersAfter.append("")
+        }
+
+        if segments.isEmpty {
+            return SegmentationResult(
+                segments: [TextSegment(index: 0, text: trimmed)],
+                joinersAfter: [""]
+            )
+        }
+
+        return SegmentationResult(segments: segments, joinersAfter: joinersAfter)
     }
+}
+
+struct SegmentationResult {
+    var segments: [TextSegment]
+    var joinersAfter: [String]
 }
 
 enum ProtectedTokenExtractor {

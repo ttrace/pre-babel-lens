@@ -83,4 +83,55 @@ struct DeterministicPreprocessEngineTests {
         #expect(result.input.glossaryMatches.count == 1)
         #expect(result.input.protectedTokens.isEmpty)
     }
+
+    @Test
+    func sentenceSegmentationPreservesNewlineInJoiners() {
+        let request = TranslationRequest(
+            sourceLanguage: "en",
+            targetLanguage: "ja",
+            text: "Line one.\nLine two.",
+            glossary: [],
+            experimentMode: .segmented
+        )
+
+        let result = DeterministicPreprocessEngine().analyze(request)
+
+        #expect(result.input.segments.count == 2)
+        #expect(result.input.segmentJoinersAfter.count == 2)
+        #expect(result.input.segmentJoinersAfter[0].contains("\n"))
+    }
+
+    @Test
+    func languageDetectionForSenseiParagraphIsStableAcrossToolchains() {
+        let text = """
+        Taku-sensei, Namba-sensei, thank you for creating such an excellent opportunity.
+
+        Hearing two introductions to Indian science fiction by Namba-sensei and Sami Ahmad Khan was a great asset.
+
+        I was impressed by Lavanya Lakshminarayan's attitude of sharing her own work and her earnest attitude towards questions.
+
+        I was deeply impressed by Ebihara's introduction to Japanese science fiction. I nodded in agreement many times, wondering if there are such perspectives.
+
+        And thank you, Samit Basu, for having such a fun time.
+
+        Thanks to all of you, I'm looking forward to seeing Indian science fiction again.
+
+        See you again.
+        """
+
+        let request = TranslationRequest(
+            sourceLanguage: "und",
+            targetLanguage: "ja",
+            text: text,
+            glossary: []
+        )
+
+        let result = DeterministicPreprocessEngine().analyze(request)
+
+        let detected = result.input.detectedLanguageCode ?? "und"
+        #expect(["und", "en"].contains(detected))
+        if detected == "en" {
+            #expect(result.input.isDetectedLanguageSupportedByAppleIntelligence == true)
+        }
+    }
 }

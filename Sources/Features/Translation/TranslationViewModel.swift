@@ -24,6 +24,7 @@ final class TranslationViewModel: ObservableObject {
     private var shouldTranslateOnLaunch: Bool = false
     private var shouldActivateAppOnLaunch: Bool = false
     private var partialTranslationsBySegment: [Int: String] = [:]
+    private var partialJoinersAfter: [String] = []
     private var lastHandledIncomingURLKey: String?
 
     init(orchestrator: TranslationOrchestrator, launchInputText: String? = nil) {
@@ -103,6 +104,7 @@ final class TranslationViewModel: ObservableObject {
         aiLanguageSupported = true
         errorMessage = nil
         partialTranslationsBySegment = [:]
+        partialJoinersAfter = []
 
         isTranslating = true
         defer { isTranslating = false }
@@ -110,14 +112,12 @@ final class TranslationViewModel: ObservableObject {
         do {
             let output = try await orchestrator.translate(
                 request,
-                onPartialSegmentResult: { [weak self] segmentIndex, partialText in
+                onPartialSegmentResult: { [weak self] segmentIndex, partialText, joinersAfter in
                     Task { @MainActor in
                         guard let self else { return }
                         self.partialTranslationsBySegment[segmentIndex] = partialText
-                        self.translatedText = self.partialTranslationsBySegment
-                            .sorted(by: { $0.key < $1.key })
-                            .map(\.value)
-                            .joined(separator: " ")
+                        self.partialJoinersAfter = joinersAfter
+                        self.translatedText = self.reconstructPartialTranslatedText()
                     }
                 }
             )
@@ -154,6 +154,35 @@ final class TranslationViewModel: ObservableObject {
             }
     }
 
+    private func reconstructPartialTranslatedText() -> String {
+        let ordered = partialTranslationsBySegment.sorted(by: { $0.key < $1.key })
+        guard !ordered.isEmpty else { return "" }
+
+        let translatedSegments = ordered.map(\.value)
+        if partialJoinersAfter.count >= translatedSegments.count {
+            return translatedSegments.enumerated().map { index, text in
+                text + normalizedJoiner(partialJoinersAfter[index], forTranslatedSegment: text)
+            }.joined()
+        }
+
+        return translatedSegments.joined(separator: " ")
+    }
+
+    private func normalizedJoiner(_ joiner: String, forTranslatedSegment translatedText: String) -> String {
+        guard !joiner.isEmpty else { return joiner }
+        guard let last = translatedText.trimmingCharacters(in: .whitespacesAndNewlines).last else {
+            return joiner
+        }
+
+        let terminalPunctuation: Set<Character> = [".", "!", "?", "。", "！", "？"]
+        guard terminalPunctuation.contains(last) else { return joiner }
+
+        var chars = Array(joiner)
+        while let first = chars.first, terminalPunctuation.contains(first) {
+            chars.removeFirst()
+        }
+        return String(chars)
+    }
     private func detailedErrorLog(from error: Error) -> String {
         let nsError = error as NSError
         let userInfoSummary: String
