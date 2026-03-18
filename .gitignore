@@ -1,2 +1,7 @@
 .build/
 .DS_Store
+dist/
+*.o
+*.d
+*.dia
+*.swiftdeps
