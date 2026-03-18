@@ -19,6 +19,26 @@
             "target": "ChampollionDeckApp",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release ChampollionDeckApp"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:champollion-deck}",
+            "name": "Debug PreBabelLens",
+            "target": "PreBabelLens",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug PreBabelLens"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:champollion-deck}",
+            "name": "Release PreBabelLens",
+            "target": "PreBabelLens",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release PreBabelLens"
         }
     ]
 }

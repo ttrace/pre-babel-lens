@@ -22,7 +22,10 @@ struct TranslationOrchestrator: Sendable {
     let preprocessEngine: PreprocessEngine
     let enginePolicy: TranslationEnginePolicy
 
-    func translate(_ request: TranslationRequest) async throws -> TranslationOutput {
+    func translate(
+        _ request: TranslationRequest,
+        onPartialSegmentResult: (@Sendable (_ segmentIndex: Int, _ partialTranslation: String) -> Void)? = nil
+    ) async throws -> TranslationOutput {
         let preprocessResult = preprocessEngine.analyze(request)
         let input = preprocessResult.input
         let engine = enginePolicy.resolveEngine(for: request)
@@ -34,7 +37,12 @@ struct TranslationOrchestrator: Sendable {
             )
         }
 
-        let segmentOutputs = try await engine.translate(input)
+        let segmentOutputs = try await engine.translate(
+            input,
+            onPartialResult: { segmentIndex, partialTranslation in
+                onPartialSegmentResult?(segmentIndex, partialTranslation)
+            }
+        )
             .sorted { $0.segmentIndex < $1.segmentIndex }
 
         let translatedText = segmentOutputs

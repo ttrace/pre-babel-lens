@@ -20,6 +20,21 @@ struct FoundationModelsTranslationEngine: TranslationEngine {
 #endif
         throw FoundationModelsIntegrationError.missingFoundationModelsToolchain
     }
+
+    func translate(
+        _ input: TranslationInput,
+        onPartialResult: (@Sendable (_ segmentIndex: Int, _ partialTranslation: String) -> Void)?
+    ) async throws -> [SegmentOutput] {
+#if canImport(FoundationModels)
+        if #available(macOS 26.0, iOS 26.0, *) {
+            return try await FoundationModelsRuntimeTranslator.translate(
+                input,
+                onPartialResult: onPartialResult
+            )
+        }
+#endif
+        throw FoundationModelsIntegrationError.missingFoundationModelsToolchain
+    }
 }
 
 private enum FoundationModelsIntegrationError: LocalizedError {
@@ -38,7 +53,10 @@ import FoundationModels
 
 @available(macOS 26.0, iOS 26.0, *)
 private enum FoundationModelsRuntimeTranslator {
-    static func translate(_ input: TranslationInput) async throws -> [SegmentOutput] {
+    static func translate(
+        _ input: TranslationInput,
+        onPartialResult: (@Sendable (_ segmentIndex: Int, _ partialTranslation: String) -> Void)? = nil
+    ) async throws -> [SegmentOutput] {
         try ensureModelAvailability()
 
         let segments = input.segments.isEmpty
@@ -51,12 +69,31 @@ private enum FoundationModelsRuntimeTranslator {
 
         for segment in segments {
             let prompt = promptForSegment(segment.text, input: input)
-            let response = try await session.respond(to: prompt)
+            var latestStreamedText: String?
+            let stream = session.streamResponse(to: prompt)
+            for try await snapshot in stream {
+                latestStreamedText = snapshot.content
+                if let onPartialResult {
+                    onPartialResult(segment.index, snapshot.content)
+                }
+            }
+
+            let finalText: String
+            if let latestStreamedText {
+                finalText = latestStreamedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                let response = try await session.respond(to: prompt)
+                finalText = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let onPartialResult {
+                    onPartialResult(segment.index, finalText)
+                }
+            }
+
             outputs.append(
                 SegmentOutput(
                     segmentIndex: segment.index,
                     sourceText: segment.text,
-                    translatedText: response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    translatedText: finalText
                 )
             )
         }

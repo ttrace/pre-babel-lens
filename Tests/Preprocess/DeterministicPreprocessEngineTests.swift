@@ -1,5 +1,5 @@
 import Testing
-@testable import ChampollionDeckApp
+@testable import PreBabelLens
 
 struct DeterministicPreprocessEngineTests {
     @Test

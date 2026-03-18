@@ -2,21 +2,21 @@
 import PackageDescription
 
 let package = Package(
-    name: "ChampollionDeck",
+    name: "PreBabelLens",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "ChampollionDeckApp", targets: ["ChampollionDeckApp"])
+        .executable(name: "PreBabelLens", targets: ["PreBabelLens"])
     ],
     targets: [
         .executableTarget(
-            name: "ChampollionDeckApp",
+            name: "PreBabelLens",
             path: "Sources"
         ),
         .testTarget(
-            name: "ChampollionDeckTests",
-            dependencies: ["ChampollionDeckApp"],
+            name: "PreBabelLensTests",
+            dependencies: ["PreBabelLens"],
             path: "Tests"
         )
     ]
