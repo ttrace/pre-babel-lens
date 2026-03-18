@@ -1,0 +1,210 @@
+name: Pre-Babel Lens Release
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: macos-latest
+    env:
+      APP_NAME: PreBabelLens
+      BUNDLE_ID: com.ttrace.prebabellens
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain info
+        run: |
+          set -euo pipefail
+          export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Import signing certificate
+        run: |
+          set -euo pipefail
+          CERT_P12="$RUNNER_TEMP/signing-cert.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_P12"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          security import "$CERT_P12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+      - name: Build app bundle (release)
+        run: |
+          set -euo pipefail
+          export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+
+          swift build -c release --product "$APP_NAME"
+          BIN_DIR="$(swift build -c release --show-bin-path)"
+          EXECUTABLE_PATH="$BIN_DIR/$APP_NAME"
+          APP_DIR="$RUNNER_TEMP/$APP_NAME.app"
+          MACOS_DIR="$APP_DIR/Contents/MacOS"
+          RESOURCES_DIR="$APP_DIR/Contents/Resources"
+          INFO_PLIST="$APP_DIR/Contents/Info.plist"
+          LOCALIZATION_SOURCE_DIR="$GITHUB_WORKSPACE/Localizations"
+          ICON_FILE_SOURCE="$GITHUB_WORKSPACE/Assets/AppIcon.icns"
+
+          if [[ ! -x "$EXECUTABLE_PATH" ]]; then
+            echo "error: executable not found at $EXECUTABLE_PATH"
+            exit 1
+          fi
+
+          mkdir -p "$MACOS_DIR"
+          mkdir -p "$RESOURCES_DIR"
+          cp "$EXECUTABLE_PATH" "$MACOS_DIR/$APP_NAME"
+          chmod +x "$MACOS_DIR/$APP_NAME"
+
+          cat > "$INFO_PLIST" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleExecutable</key>
+            <string>${APP_NAME}</string>
+            <key>CFBundleIdentifier</key>
+            <string>${BUNDLE_ID}</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>${APP_NAME}</string>
+            <key>CFBundleDisplayName</key>
+            <string>Pre-Babel Lens</string>
+            <key>CFBundleURLTypes</key>
+            <array>
+              <dict>
+                <key>CFBundleURLName</key>
+                <string>com.ttrace.prebabellens.url</string>
+                <key>CFBundleURLSchemes</key>
+                <array>
+                  <string>prebabellens</string>
+                </array>
+              </dict>
+            </array>
+            <key>CFBundleIconFile</key>
+            <string>AppIcon</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${GITHUB_REF_NAME#v}</string>
+            <key>CFBundleVersion</key>
+            <string>${GITHUB_RUN_NUMBER}</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>14.0</string>
+            <key>NSPrincipalClass</key>
+            <string>NSApplication</string>
+            <key>CFBundleLocalizations</key>
+            <array>
+              <string>en</string>
+              <string>ja</string>
+            </array>
+          </dict>
+          </plist>
+          PLIST
+
+          if [[ -d "$LOCALIZATION_SOURCE_DIR" ]]; then
+            cp -R "$LOCALIZATION_SOURCE_DIR/"*.lproj "$RESOURCES_DIR/" 2>/dev/null || true
+          fi
+
+          if [[ -f "$ICON_FILE_SOURCE" ]]; then
+            cp "$ICON_FILE_SOURCE" "$RESOURCES_DIR/AppIcon.icns"
+          fi
+
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+
+      - name: Codesign app
+        run: |
+          set -euo pipefail
+          codesign --force --options runtime --timestamp --deep \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            "$APP_DIR"
+          codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+          spctl --assess --type execute --verbose "$APP_DIR"
+
+      - name: Dev Center credential check
+        run: |
+          set -euo pipefail
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            >/dev/null
+          echo "Apple Developer credential check passed."
+
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          DMG_PATH="$RUNNER_TEMP/${APP_NAME}-${GITHUB_REF_NAME}.dmg"
+          hdiutil create \
+            -volname "$APP_NAME" \
+            -srcfolder "$APP_DIR" \
+            -ov \
+            -format UDZO \
+            "$DMG_PATH"
+
+          echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
+
+      - name: Notarize DMG
+        run: |
+          set -euo pipefail
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+      - name: Staple and validate DMG
+        run: |
+          set -euo pipefail
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+
+      - name: Upload stapled DMG to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "Pre-Babel Lens $TAG" \
+              --notes "Signed + notarized macOS release for Pre-Babel Lens."
+          fi
+
+          gh release upload "$TAG" "$DMG_PATH" --clobber
