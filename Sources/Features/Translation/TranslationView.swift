@@ -92,6 +92,20 @@ struct TranslationView: View {
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
+                    GroupBox("Console") {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 6) {
+                                ForEach(Array(viewModel.developerLogs.enumerated()), id: \.offset) { _, line in
+                                    Text(line)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                        .frame(minHeight: 120, maxHeight: 220)
+                    }
                 }
             }
             .padding(36)

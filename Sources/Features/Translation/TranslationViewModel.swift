@@ -17,6 +17,7 @@ final class TranslationViewModel: ObservableObject {
     @Published var aiLanguageSupported: Bool = true
     @Published var isTranslating: Bool = false
     @Published var errorMessage: String?
+    @Published var developerLogs: [String] = []
 
     let targetLanguageOptions: [TargetLanguageOption]
     private let orchestrator: TranslationOrchestrator
@@ -66,6 +67,7 @@ final class TranslationViewModel: ObservableObject {
 
         lastHandledIncomingURLKey = deduplicationKey
         inputText = trimmed
+        appendDeveloperLog("Incoming URL accepted. chars=\(trimmed.count), target=\(targetLanguage)")
         await translate()
     }
 
@@ -128,14 +130,17 @@ final class TranslationViewModel: ObservableObject {
             detectedLanguageCode = output.analysis.input.detectedLanguageCode ?? ""
             aiLanguageSupported = output.analysis.input.isDetectedLanguageSupportedByAppleIntelligence
             errorMessage = nil
+            appendDeveloperLog("Translation succeeded. segments=\(output.segmentOutputs.count), detected=\(detectedLanguageCode.isEmpty ? "none" : detectedLanguageCode)")
         } catch let pipelineError as TranslationPipelineError {
             if let detected = pipelineError.detectedLanguageCode {
                 detectedLanguageCode = detected
                 aiLanguageSupported = false
             }
             errorMessage = pipelineError.localizedDescription
+            appendDeveloperLog("Pipeline error: \(pipelineError.localizedDescription)")
         } catch {
             errorMessage = error.localizedDescription
+            appendDeveloperLog(detailedErrorLog(from: error))
         }
     }
 
@@ -147,6 +152,34 @@ final class TranslationViewModel: ObservableObject {
                 guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return nil }
                 return GlossaryEntry(source: parts[0], target: parts[1])
             }
+    }
+
+    private func detailedErrorLog(from error: Error) -> String {
+        let nsError = error as NSError
+        let userInfoSummary: String
+        if nsError.userInfo.isEmpty {
+            userInfoSummary = "{}"
+        } else {
+            userInfoSummary = nsError.userInfo
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: ", ")
+        }
+
+        return [
+            "Error: \(error.localizedDescription)",
+            "Type: \(String(reflecting: type(of: error)))",
+            "Domain: \(nsError.domain)",
+            "Code: \(nsError.code)",
+            "UserInfo: \(userInfoSummary)",
+        ].joined(separator: " | ")
+    }
+
+    private func appendDeveloperLog(_ message: String) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        developerLogs.append("[\(timestamp)] \(message)")
+        if developerLogs.count > 300 {
+            developerLogs.removeFirst(developerLogs.count - 300)
+        }
     }
 }
 

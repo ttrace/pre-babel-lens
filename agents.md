@@ -151,6 +151,10 @@ When making changes:
 5. explain tradeoffs clearly in summaries
 6. call out uncertainty instead of guessing
 
+For debugging and observability:
+- append warnings and errors to the in-app Developer Console when available
+- prefer structured error details (type/domain/code/userInfo) over only localized messages
+
 If introducing a new abstraction:
 - explain why it is needed
 - keep naming simple
