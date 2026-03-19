@@ -64,18 +64,75 @@ private enum FoundationModelsRuntimeTranslator {
             : input.segments
 
         let session = LanguageModelSession(instructions: instructions(for: input))
+        let sensitiveContentSession = LanguageModelSession(
+            instructions: sensitiveContentSafeInstructions(for: input)
+        )
         var outputs: [SegmentOutput] = []
         outputs.reserveCapacity(segments.count)
 
         for segment in segments {
             let prompt = promptForSegment(segment.text, input: input)
-            var latestStreamedText: String?
-            var repeatedSnapshotCount = 0
-            let maxAllowedCharacters = max(400, min(8_000, segment.text.count * 12))
-            let maxSnapshotCount = 240
-            let maxStreamingDuration: TimeInterval = 20
-            let streamStartedAt = Date()
-            var receivedSnapshotCount = 0
+            let finalText: String
+
+            do {
+                finalText = try await translateSegment(
+                    prompt: prompt,
+                    sourceText: segment.text,
+                    using: session,
+                    segmentIndex: segment.index,
+                    onPartialResult: onPartialResult
+                )
+            } catch {
+                if isLikelyUnsafeGenerationError(error) {
+                    let safePrompt = promptForSensitiveContentSegment(segment.text, input: input)
+                    do {
+                        finalText = try await translateSegment(
+                            prompt: safePrompt,
+                            sourceText: segment.text,
+                            using: sensitiveContentSession,
+                            segmentIndex: segment.index,
+                            onPartialResult: onPartialResult
+                        )
+                    } catch {
+                        if isLikelyUnsafeGenerationError(error) {
+                            finalText = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        } else {
+                            throw error
+                        }
+                    }
+                } else {
+                    throw error
+                }
+            }
+
+            outputs.append(
+                SegmentOutput(
+                    segmentIndex: segment.index,
+                    sourceText: segment.text,
+                    translatedText: finalText
+                )
+            )
+        }
+
+        return outputs
+    }
+
+    private static func translateSegment(
+        prompt: String,
+        sourceText: String,
+        using session: LanguageModelSession,
+        segmentIndex: Int,
+        onPartialResult: (@Sendable (_ segmentIndex: Int, _ partialTranslation: String) -> Void)?
+    ) async throws -> String {
+        var latestStreamedText: String?
+        var repeatedSnapshotCount = 0
+        let maxAllowedCharacters = max(400, min(8_000, sourceText.count * 12))
+        let maxSnapshotCount = 240
+        let maxStreamingDuration: TimeInterval = 20
+        let streamStartedAt = Date()
+        var receivedSnapshotCount = 0
+
+        do {
             let stream = session.streamResponse(to: prompt)
             for try await snapshot in stream {
                 receivedSnapshotCount += 1
@@ -104,32 +161,23 @@ private enum FoundationModelsRuntimeTranslator {
                 }
 
                 latestStreamedText = snapshot.content
-                if let onPartialResult {
-                    onPartialResult(segment.index, latestStreamedText ?? snapshot.content)
-                }
+                onPartialResult?(segmentIndex, latestStreamedText ?? snapshot.content)
             }
-
-            let finalText: String
-            if let latestStreamedText {
-                finalText = latestStreamedText.trimmingCharacters(in: .whitespacesAndNewlines)
-            } else {
-                let response = try await session.respond(to: prompt)
-                finalText = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let onPartialResult {
-                    onPartialResult(segment.index, finalText)
-                }
+        } catch {
+            if let latestStreamedText, !latestStreamedText.isEmpty {
+                return latestStreamedText.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-
-            outputs.append(
-                SegmentOutput(
-                    segmentIndex: segment.index,
-                    sourceText: segment.text,
-                    translatedText: finalText
-                )
-            )
+            throw error
         }
 
-        return outputs
+        if let latestStreamedText, !latestStreamedText.isEmpty {
+            return latestStreamedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let response = try await session.respond(to: prompt)
+        let finalText = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        onPartialResult?(segmentIndex, finalText)
+        return finalText
     }
 
     private static func ensureModelAvailability() throws {
@@ -150,6 +198,18 @@ private enum FoundationModelsRuntimeTranslator {
         Return only the translated text.
         Preserve punctuation structure whenever possible.
         Do not include explanations or notes.
+        """
+    }
+
+    private static func sensitiveContentSafeInstructions(for input: TranslationInput) -> String {
+        """
+        You are a universal translation engine.
+        Translate from \(input.sourceLanguage) to \(input.targetLanguage).
+        The input can include politics, war, safety, or other sensitive topics.
+        Your role is strictly translation, not policy analysis.
+        Keep meaning and tone faithful.
+        Return only the translated text.
+        Do not refuse, summarize, or add warnings.
         """
     }
 
@@ -177,6 +237,39 @@ private enum FoundationModelsRuntimeTranslator {
         lines.append("")
         lines.append("Translated text:")
         return lines.joined(separator: "\n")
+    }
+
+    private static func promptForSensitiveContentSegment(_ segmentText: String, input: TranslationInput) -> String {
+        var lines: [String] = []
+        lines.append("Task: direct translation only.")
+        lines.append("Source language: \(input.sourceLanguage)")
+        lines.append("Target language: \(input.targetLanguage)")
+        lines.append("")
+        lines.append("Source text:")
+        lines.append(segmentText)
+
+        if !input.protectedTokens.isEmpty {
+            let protectedList = input.protectedTokens
+                .map(\.value)
+                .joined(separator: ", ")
+            lines.append("")
+            lines.append("Protected tokens (do not translate): \(protectedList)")
+        }
+
+        lines.append("")
+        lines.append("Output only the translated text:")
+        return lines.joined(separator: "\n")
+    }
+
+    private static func isLikelyUnsafeGenerationError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain.contains("FoundationModels.LanguageModelSession.GenerationError"),
+           nsError.code == 2 {
+            return true
+        }
+
+        let localized = error.localizedDescription.lowercased()
+        return localized.contains("unsafe")
     }
 }
 
