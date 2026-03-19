@@ -70,11 +70,42 @@ private enum FoundationModelsRuntimeTranslator {
         for segment in segments {
             let prompt = promptForSegment(segment.text, input: input)
             var latestStreamedText: String?
+            var repeatedSnapshotCount = 0
+            let maxAllowedCharacters = max(400, min(8_000, segment.text.count * 12))
+            let maxSnapshotCount = 240
+            let maxStreamingDuration: TimeInterval = 20
+            let streamStartedAt = Date()
+            var receivedSnapshotCount = 0
             let stream = session.streamResponse(to: prompt)
             for try await snapshot in stream {
+                receivedSnapshotCount += 1
+
+                if latestStreamedText == snapshot.content {
+                    repeatedSnapshotCount += 1
+                } else {
+                    repeatedSnapshotCount = 0
+                }
+
+                if repeatedSnapshotCount >= 12 {
+                    break
+                }
+
+                if receivedSnapshotCount >= maxSnapshotCount {
+                    break
+                }
+
+                if Date().timeIntervalSince(streamStartedAt) >= maxStreamingDuration {
+                    break
+                }
+
+                if snapshot.content.count > maxAllowedCharacters {
+                    latestStreamedText = String(snapshot.content.prefix(maxAllowedCharacters))
+                    break
+                }
+
                 latestStreamedText = snapshot.content
                 if let onPartialResult {
-                    onPartialResult(segment.index, snapshot.content)
+                    onPartialResult(segment.index, latestStreamedText ?? snapshot.content)
                 }
             }
 
