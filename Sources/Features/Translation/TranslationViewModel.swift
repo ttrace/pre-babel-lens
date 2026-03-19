@@ -2,6 +2,13 @@ import Foundation
 
 @MainActor
 final class TranslationViewModel: ObservableObject {
+    enum TranslationStatus: Equatable {
+        case ready
+        case preprocessing(mode: TranslationExperimentMode)
+        case translating(current: Int, total: Int)
+        case completed
+    }
+
     @Published var targetLanguage: String
     @Published var experimentMode: TranslationExperimentMode = .rawInput
     @Published var inputText: String = ""
@@ -18,6 +25,7 @@ final class TranslationViewModel: ObservableObject {
     @Published var isTranslating: Bool = false
     @Published var errorMessage: String?
     @Published var developerLogs: [String] = []
+    @Published private(set) var status: TranslationStatus = .ready
 
     let targetLanguageOptions: [TargetLanguageOption]
     private let orchestrator: TranslationOrchestrator
@@ -91,6 +99,7 @@ final class TranslationViewModel: ObservableObject {
             detectedLanguageCode = ""
             aiLanguageSupported = true
             errorMessage = nil
+            status = .ready
             return
         }
 
@@ -105,6 +114,7 @@ final class TranslationViewModel: ObservableObject {
         errorMessage = nil
         partialTranslationsBySegment = [:]
         partialJoinersAfter = []
+        status = .preprocessing(mode: experimentMode)
 
         isTranslating = true
         defer { isTranslating = false }
@@ -118,6 +128,9 @@ final class TranslationViewModel: ObservableObject {
                         self.partialTranslationsBySegment[segmentIndex] = partialText
                         self.partialJoinersAfter = joinersAfter
                         self.translatedText = self.reconstructPartialTranslatedText()
+                        let totalSegments = max(1, joinersAfter.count)
+                        let currentSegment = min(totalSegments, max(1, segmentIndex + 1))
+                        self.status = .translating(current: currentSegment, total: totalSegments)
                     }
                 }
             )
@@ -130,6 +143,7 @@ final class TranslationViewModel: ObservableObject {
             detectedLanguageCode = output.analysis.input.detectedLanguageCode ?? ""
             aiLanguageSupported = output.analysis.input.isDetectedLanguageSupportedByAppleIntelligence
             errorMessage = nil
+            status = .completed
             appendDeveloperLog("Translation succeeded. segments=\(output.segmentOutputs.count), detected=\(detectedLanguageCode.isEmpty ? "none" : detectedLanguageCode)")
         } catch let pipelineError as TranslationPipelineError {
             if let detected = pipelineError.detectedLanguageCode {
@@ -137,10 +151,25 @@ final class TranslationViewModel: ObservableObject {
                 aiLanguageSupported = false
             }
             errorMessage = pipelineError.localizedDescription
+            status = .ready
             appendDeveloperLog("Pipeline error: \(pipelineError.localizedDescription)")
         } catch {
             errorMessage = error.localizedDescription
+            status = .ready
             appendDeveloperLog(detailedErrorLog(from: error))
+        }
+    }
+
+    var statusText: String {
+        switch status {
+        case .ready:
+            return "Ready"
+        case .preprocessing(let mode):
+            return "Preprocessing (\(mode.displayName))"
+        case .translating(let current, let total):
+            return "Translating \(current)/\(total)"
+        case .completed:
+            return "Completed"
         }
     }
 

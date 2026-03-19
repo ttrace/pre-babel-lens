@@ -200,10 +200,17 @@ struct TranslationView: View {
             }
 
             ScrollView {
-                Text(viewModel.translatedText.isEmpty ? "(empty)" : viewModel.translatedText)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                Group {
+                    if viewModel.translatedText.isEmpty {
+                        Color.clear
+                            .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
+                    } else {
+                        Text(viewModel.translatedText)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(12)
             }
             .frame(minHeight: 300)
             .background(
@@ -216,7 +223,7 @@ struct TranslationView: View {
                     .font(.body)
                     .foregroundStyle(.red)
             } else {
-                Text("Completed.")
+                Text(viewModel.statusText)
                     .font(.system(size: 14, weight: .medium, design: .rounded))
                     .foregroundStyle(Color(red: 0.20, green: 0.35, blue: 0.30))
             }
