@@ -36,6 +36,18 @@ swift build
 swift test
 ```
 
+## Quick Launch by Double Copy (macOS)
+
+You can launch translation quickly with a DeepL-like flow:
+
+1. Select text in any app.
+2. Press `Command + C` twice quickly (`Cmd+C`, `Cmd+C` within about 1 second).
+3. Pre-Babel Lens comes to front and starts translation with the selected text.
+
+Notes:
+- This feature watches clipboard changes on macOS only.
+- It ignores empty text and applies the same duplicate suppression logic used by URL launch.
+
 ## Automator Integration (macOS)
 
 You can launch translation from selected text via Automator.

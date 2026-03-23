@@ -421,6 +421,7 @@ private enum FoundationModelsRuntimeTranslator {
         lines.append("Target language code: \(input.targetLanguage)")
         lines.append("Segment kind: \(segment.kind.rawValue)")
         lines.append("Translate faithfully for this segment kind.")
+        lines.append("Important: translation must be translated source text, never the kind label itself.")
         return lines.joined(separator: "\n")
     }
 
@@ -444,6 +445,7 @@ private enum FoundationModelsRuntimeTranslator {
         lines.append("")
         lines.append("Segment kind: \(segment.kind.rawValue)")
         lines.append("Translate faithfully for this segment kind.")
+        lines.append("Important: translation must be translated source text, never the kind label itself.")
         return lines.joined(separator: "\n")
     }
 
@@ -458,6 +460,7 @@ private enum FoundationModelsRuntimeTranslator {
         - target language: \(expectedTargetLanguage)
         - segment kind: \(expectedKind.rawValue)
         - output translation only, no notes or placeholders
+        - translation must not be the kind label (for example: heading, general, dialogue, ui-labels, lists, codes_or_path)
 
         Source text:
         \(sourceText)
@@ -525,6 +528,9 @@ private enum FoundationModelsRuntimeTranslator {
         guard !trimmed.isEmpty else {
             throw FoundationModelsStructuredOutputError.emptyTranslation
         }
+        guard !isKindLabelTranslation(trimmed) else {
+            throw FoundationModelsStructuredOutputError.kindLabelTranslation(value: trimmed)
+        }
         guard !isPlaceholderTranslation(trimmed) else {
             throw FoundationModelsStructuredOutputError.placeholderTranslation(value: trimmed)
         }
@@ -547,6 +553,11 @@ private enum FoundationModelsRuntimeTranslator {
             "{translation}",
         ]
         return placeholders.contains(normalized)
+    }
+
+    private static func isKindLabelTranslation(_ text: String) -> Bool {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return SegmentKind.allCases.map(\.rawValue).contains(normalized)
     }
 
     private static func normalizedLanguageCode(_ raw: String) -> String {
@@ -602,6 +613,7 @@ private enum FoundationModelsStructuredOutputError: LocalizedError {
     case targetLanguageMismatch(expected: String, actual: String)
     case kindMismatch(expected: String, actual: String)
     case emptyTranslation
+    case kindLabelTranslation(value: String)
     case placeholderTranslation(value: String)
 
     var isRetryable: Bool {
@@ -613,6 +625,8 @@ private enum FoundationModelsStructuredOutputError: LocalizedError {
         case .kindMismatch:
             return true
         case .emptyTranslation:
+            return true
+        case .kindLabelTranslation:
             return true
         case .placeholderTranslation:
             return true
@@ -629,6 +643,8 @@ private enum FoundationModelsStructuredOutputError: LocalizedError {
             return "Structured output kind mismatch. expected=\(expected), actual=\(actual)"
         case .emptyTranslation:
             return "Structured output translation was empty."
+        case .kindLabelTranslation(let value):
+            return "Structured output translation was a kind label (\(value))."
         case .placeholderTranslation(let value):
             return "Structured output translation was placeholder text (\(value))."
         }

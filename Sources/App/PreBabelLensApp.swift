@@ -6,6 +6,9 @@ import AppKit
 @main
 struct PreBabelLens: App {
     private let viewModel: TranslationViewModel
+#if os(macOS)
+    private let clipboardDoubleCopyDetector: ClipboardDoubleCopyDetector
+#endif
 
     init() {
         let preprocess = DeterministicPreprocessEngine()
@@ -20,6 +23,16 @@ struct PreBabelLens: App {
             ),
             launchInputText: launchInputText
         )
+#if os(macOS)
+        let vm = self.viewModel
+        self.clipboardDoubleCopyDetector = ClipboardDoubleCopyDetector { text in
+            Task { @MainActor in
+                Self.activateExistingWindow()
+                await vm.handleDoubleCopyText(text)
+            }
+        }
+        self.clipboardDoubleCopyDetector.start()
+#endif
     }
 
     var body: some Scene {
@@ -67,9 +80,17 @@ struct PreBabelLens: App {
 #if os(macOS)
     @MainActor
     private static func activateExistingWindow() {
+        NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         NSApp.activate(ignoringOtherApps: true)
 
-        if let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first {
+        for window in NSApp.windows {
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
+            window.orderFrontRegardless()
+        }
+
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible }) ?? NSApp.windows.first {
             window.makeKeyAndOrderFront(nil)
         }
     }

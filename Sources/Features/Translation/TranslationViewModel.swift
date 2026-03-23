@@ -78,6 +78,14 @@ final class TranslationViewModel: ObservableObject {
 
     func handleIncomingURL(_ url: URL) async {
         guard let text = URLLaunchParser.extractText(from: url) else { return }
+        await handleExternalTriggerText(text, source: "url")
+    }
+
+    func handleDoubleCopyText(_ text: String) async {
+        await handleExternalTriggerText(text, source: "double-copy")
+    }
+
+    private func handleExternalTriggerText(_ text: String, source: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let deduplicationKey = "\(targetLanguage)\u{1F}\(experimentMode.rawValue)\u{1F}\(trimmed)"
@@ -86,7 +94,7 @@ final class TranslationViewModel: ObservableObject {
         lastHandledIncomingURLKey = deduplicationKey
         inputText = trimmed
         appendDeveloperLog(
-            "Incoming URL accepted. chars=\(trimmed.count), target=\(targetLanguage), mode=\(experimentMode.rawValue)"
+            "Incoming \(source) accepted. chars=\(trimmed.count), target=\(targetLanguage), mode=\(experimentMode.rawValue)"
         )
         await translate()
     }
