@@ -17,8 +17,10 @@ struct FoundationModelsTranslationEngine: DiagnosticCapableTranslationEngine {
         if #available(macOS 26.0, iOS 26.0, *) {
             return try await FoundationModelsRuntimeTranslator.translate(input)
         }
-#endif
+        throw FoundationModelsIntegrationError.unsupportedOperatingSystem
+#else
         throw FoundationModelsIntegrationError.missingFoundationModelsToolchain
+#endif
     }
 
     func translate(
@@ -32,8 +34,10 @@ struct FoundationModelsTranslationEngine: DiagnosticCapableTranslationEngine {
                 onPartialResult: onPartialResult
             )
         }
-#endif
+        throw FoundationModelsIntegrationError.unsupportedOperatingSystem
+#else
         throw FoundationModelsIntegrationError.missingFoundationModelsToolchain
+#endif
     }
 
     func translate(
@@ -49,18 +53,23 @@ struct FoundationModelsTranslationEngine: DiagnosticCapableTranslationEngine {
                 onDiagnosticEvent: onDiagnosticEvent
             )
         }
-#endif
+        throw FoundationModelsIntegrationError.unsupportedOperatingSystem
+#else
         throw FoundationModelsIntegrationError.missingFoundationModelsToolchain
+#endif
     }
 }
 
 private enum FoundationModelsIntegrationError: LocalizedError {
     case missingFoundationModelsToolchain
+    case unsupportedOperatingSystem
 
     var errorDescription: String? {
         switch self {
         case .missingFoundationModelsToolchain:
             return "Foundation Models is unavailable in the current build toolchain. Build with Xcode toolchain and retry."
+        case .unsupportedOperatingSystem:
+            return "Foundation Models requires macOS 26.0+ / iOS 26.0+. Please run this app on a supported OS version."
         }
     }
 }
