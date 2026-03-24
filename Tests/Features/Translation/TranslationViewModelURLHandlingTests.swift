@@ -50,6 +50,83 @@ struct TranslationViewModelURLHandlingTests {
         #expect(await counter.current() == 2)
     }
 
+    @Test
+    func handleIncomingURLIgnoresDifferentScheme() async throws {
+        let counter = TranslationCallCounter()
+        let viewModel = await makeViewModel(counter: counter)
+        let url = try #require(URL(string: "https://example.com/?text=Hello"))
+
+        await viewModel.handleIncomingURL(url)
+
+        await MainActor.run {
+            #expect(viewModel.inputText.isEmpty)
+            #expect(viewModel.translatedText.isEmpty)
+        }
+        #expect(await counter.current() == 0)
+    }
+
+    @Test
+    func handleIncomingURLAcceptsSchemeCaseInsensitive() async throws {
+        let counter = TranslationCallCounter()
+        let viewModel = await makeViewModel(counter: counter)
+        let url = try #require(URL(string: "PreBabelLens://translate?text=Hello"))
+
+        await viewModel.handleIncomingURL(url)
+
+        await MainActor.run {
+            #expect(viewModel.inputText == "Hello")
+            #expect(viewModel.translatedText.contains("Hello"))
+        }
+        #expect(await counter.current() == 1)
+    }
+
+    @Test
+    func handleIncomingURLUsesPathWhenTextQueryMissing() async throws {
+        let counter = TranslationCallCounter()
+        let viewModel = await makeViewModel(counter: counter)
+        let url = try #require(URL(string: "prebabellens://translate/Hello%20from%20path"))
+
+        await viewModel.handleIncomingURL(url)
+
+        await MainActor.run {
+            #expect(viewModel.inputText == "Hello from path")
+            #expect(viewModel.translatedText.contains("Hello from path"))
+        }
+        #expect(await counter.current() == 1)
+    }
+
+    @Test
+    func handleIncomingURLPrefersTextQueryOverPath() async throws {
+        let counter = TranslationCallCounter()
+        let viewModel = await makeViewModel(counter: counter)
+        let url = try #require(
+            URL(string: "prebabellens://translate/Path%20text?text=Query%20text")
+        )
+
+        await viewModel.handleIncomingURL(url)
+
+        await MainActor.run {
+            #expect(viewModel.inputText == "Query text")
+            #expect(viewModel.translatedText.contains("Query text"))
+        }
+        #expect(await counter.current() == 1)
+    }
+
+    @Test
+    func handleIncomingURLSkipsWhenTextQueryIsBlank() async throws {
+        let counter = TranslationCallCounter()
+        let viewModel = await makeViewModel(counter: counter)
+        let url = try #require(URL(string: "prebabellens://translate?text=%20%20%20"))
+
+        await viewModel.handleIncomingURL(url)
+
+        await MainActor.run {
+            #expect(viewModel.inputText.isEmpty)
+            #expect(viewModel.translatedText.isEmpty)
+        }
+        #expect(await counter.current() == 0)
+    }
+
     @MainActor
     private func makeViewModel(counter: TranslationCallCounter) -> TranslationViewModel {
         let engine = CountingTranslationEngine(counter: counter)
