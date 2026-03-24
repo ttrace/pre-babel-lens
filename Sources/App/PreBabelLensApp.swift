@@ -3,7 +3,6 @@ import SwiftUI
 import AppKit
 #endif
 
-#if os(macOS)
 @main
 struct PreBabelLens: App {
     private let viewModel: TranslationViewModel
@@ -63,6 +62,7 @@ struct PreBabelLens: App {
 
     private var translationRootView: some View {
         TranslationView(viewModel: viewModel)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .onOpenURL { url in
                 Task { @MainActor in
                     await viewModel.handleIncomingURL(url)
@@ -101,4 +101,3 @@ struct PreBabelLens: App {
     }
 #endif
 }
-#endif

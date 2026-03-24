@@ -22,26 +22,43 @@ struct TranslationView: View {
 
     // #region MARK: Body
     var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: colorScheme == .dark
-                    ? [
-                        Color(red: 0.10, green: 0.12, blue: 0.14),
-                        Color(red: 0.16, green: 0.19, blue: 0.22),
-                    ]
-                    : [
-                        Color(red: 0.98, green: 0.92, blue: 0.82).opacity(0.98),
-                        Color(red: 0.93, green: 0.90, blue: 0.88).opacity(0.98),
-                    ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-
+        GeometryReader { proxy in
             contentLayout
                 .foregroundStyle(colorScheme == .dark ? .white : .primary)
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+                .background(
+                    LinearGradient(
+                        colors: colorScheme == .dark
+                            ? [
+                                Color(red: 0.10, green: 0.12, blue: 0.14),
+                                Color(red: 0.16, green: 0.19, blue: 0.22),
+                            ]
+                            : [
+                                Color(red: 0.98, green: 0.92, blue: 0.82).opacity(0.98),
+                                Color(red: 0.93, green: 0.90, blue: 0.88).opacity(0.98),
+                            ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                #if os(iOS)
+                .overlay(alignment: .bottomTrailing) {
+                    #if DEBUG
+                    Text(debugFrameText(proxySize: proxy.size))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.4), in: Capsule())
+                        .padding(8)
+                    #endif
+                }
+                #endif
         }
+        .ignoresSafeArea()
+        #if os(macOS)
         .frame(minHeight: 680)
+        #endif
         .task {
             #if os(macOS)
                 if viewModel.consumeLaunchActivationRequest() {
@@ -57,29 +74,35 @@ struct TranslationView: View {
     @ViewBuilder
     private var contentLayout: some View {
         #if os(iOS)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                mobileHeader
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Spacer()
+                settingsMenu(iconSize: 17, frameSize: 34)
+            }
+            .padding(.top, 2)
 
-                if isWideIOSLayout {
-                    HStack(alignment: .top, spacing: 14) {
-                        sourceCard
-                        outputCard
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 14) {
-                        sourceCard
-                        outputCard
-                    }
+            languagePicker
+
+            if isWideIOSLayout {
+                HStack(alignment: .top, spacing: 14) {
+                    sourceCard
+                    outputCard
                 }
-
-                if developerModeEnabled {
-                    developerPanels
+            } else {
+                VStack(alignment: .leading, spacing: 14) {
+                    sourceCard
+                    outputCard
                 }
             }
-            .padding(16)
+
+            if developerModeEnabled {
+                developerPanels
+            }
         }
-        .scrollDismissesKeyboard(.interactively)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         #else
         VStack(alignment: .leading, spacing: 18) {
             desktopHeader
@@ -120,17 +143,7 @@ struct TranslationView: View {
 
     @ViewBuilder
     private var mobileHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center) {
-                Text("Pre-Babel Lens")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Spacer()
-                settingsMenu(iconSize: 18, frameSize: 40)
-            }
-            languagePicker
-        }
+        EmptyView()
     }
 
     @ViewBuilder
@@ -242,17 +255,29 @@ struct TranslationView: View {
                 .frame(minHeight: editorMinHeight)
                 .padding(8)
                 .font(.body)
+                #if os(iOS)
+                .background(colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30))
+                .overlay(
+                    RoundedRectangle(cornerRadius: editorCornerRadius)
+                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                )
+                #else
                 .background(
                     colorScheme == .dark ? Color.black.opacity(0.3) : Color.white.opacity(0.4),
-                    in: RoundedRectangle(cornerRadius: 18)
+                    in: RoundedRectangle(cornerRadius: editorCornerRadius)
                 )
+                #endif
         }
-        .padding(22)
+        .padding(cardOuterPadding)
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        #if os(iOS)
+        .background(Color.clear)
+        #else
         .background(
             colorScheme == .dark ? Color.black.opacity(0.5) : Color.white.opacity(0.7),
-            in: RoundedRectangle(cornerRadius: 26)
+            in: RoundedRectangle(cornerRadius: cardCornerRadius)
         )
+        #endif
     }
 
     private var outputCard: some View {
@@ -293,10 +318,18 @@ struct TranslationView: View {
                 .padding(12)
             }
             .frame(minHeight: editorMinHeight)
+            #if os(iOS)
+            .background(colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30))
+            .overlay(
+                RoundedRectangle(cornerRadius: editorCornerRadius)
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            )
+            #else
             .background(
                 colorScheme == .dark ? Color.black.opacity(0.3) : Color.white.opacity(0.4),
-                in: RoundedRectangle(cornerRadius: 18)
+                in: RoundedRectangle(cornerRadius: editorCornerRadius)
             )
+            #endif
 
             if let error = viewModel.errorMessage {
                 Text(error)
@@ -319,18 +352,46 @@ struct TranslationView: View {
                 }
             }
         }
-        .padding(22)
+        .padding(cardOuterPadding)
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        #if os(iOS)
+        .background(Color.clear)
+        #else
         .background(
             colorScheme == .dark ? Color.black.opacity(0.5) : Color.white.opacity(0.7),
-            in: RoundedRectangle(cornerRadius: 26)
+            in: RoundedRectangle(cornerRadius: cardCornerRadius)
         )
+        #endif
     }
     // #endregion
 
+    private var cardOuterPadding: CGFloat {
+        #if os(iOS)
+        return 0
+        #else
+        return 22
+        #endif
+    }
+
+    private var cardCornerRadius: CGFloat {
+        #if os(iOS)
+        return 0
+        #else
+        return 26
+        #endif
+    }
+
+    private var editorCornerRadius: CGFloat {
+        #if os(iOS)
+        return 0
+        #else
+        return 18
+        #endif
+    }
+
     private var editorMinHeight: CGFloat {
         #if os(iOS)
-        return 180
+        return 170
         #else
         return 300
         #endif
@@ -357,6 +418,27 @@ struct TranslationView: View {
         return timingTrace?.summary ?? "(n/a)"
     }
     // #endregion
+
+    #if os(iOS)
+    private func debugFrameText(proxySize: CGSize) -> String {
+        #if DEBUG
+        let screen = UIScreen.main.bounds.size
+        let idiom = UIDevice.current.userInterfaceIdiom == .phone ? "phone" : "pad"
+        let hClass = horizontalSizeClass == .regular ? "regular" : "compact"
+        return String(
+            format: "SWIFTUI-IOS %.0fx%.0f / screen %.0fx%.0f / %@ %@",
+            proxySize.width,
+            proxySize.height,
+            screen.width,
+            screen.height,
+            idiom,
+            hClass
+        )
+        #else
+        return ""
+        #endif
+    }
+    #endif
 
     // #region MARK: Clipboard Actions
     private func copyOutputToClipboard() {
