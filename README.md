@@ -36,6 +36,27 @@ swift build
 swift test
 ```
 
+## Release (Local Signing + Notarization)
+
+This project's official release artifacts are built locally, signed locally, and notarized locally.
+Do not use GitHub-hosted CI build artifacts as official distributables.
+
+Preferred release script:
+
+```bash
+scripts/build_notarized_release.sh
+```
+
+Credential options:
+- Recommended: `NOTARY_PROFILE` (Keychain profile created by `xcrun notarytool store-credentials`)
+- Legacy fallback: `APPLE_ID` + app-specific password + `APPLE_TEAM_ID`
+
+The script performs:
+1. local release build
+2. Developer ID code signing
+3. notarization submission/wait
+4. stapling and validation
+
 ## Quick Launch by Double Copy (macOS)
 
 You can launch translation quickly with a DeepL-like flow:

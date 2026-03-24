@@ -146,6 +146,13 @@ Prefer tests for:
 - formatting preservation
 - engine selection policy
 
+## Release Policy
+- Official release artifacts must be built on local macOS using the project owner's Xcode toolchain.
+- Official release artifacts must be signed with local Developer ID credentials, notarized, and stapled locally.
+- GitHub-hosted build artifacts must not be treated as official distributables for this project.
+- Preferred command for official release packaging: `scripts/build_notarized_release.sh`.
+- Use `NOTARY_PROFILE` keychain profile for notarization credentials when available.
+
 ## Implementation Guidance for Codex
 When making changes:
 1. read surrounding code first
