@@ -124,6 +124,7 @@ private struct WindowAppearanceConfigurator: NSViewRepresentable {
     }
 
     private func configure(window: NSWindow) {
+        window.isRestorable = false
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .unified
         window.backgroundColor = NSColor(
