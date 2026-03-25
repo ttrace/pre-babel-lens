@@ -5,3 +5,8 @@ dist/
 *.d
 *.dia
 *.swiftdeps
+
+# SwiftPM / Xcode local generated files
+.swiftpm/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
