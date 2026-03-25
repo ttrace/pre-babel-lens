@@ -22,25 +22,26 @@ struct TranslationView: View {
 
     // #region MARK: Body
     var body: some View {
-        contentLayout
-            .foregroundStyle(colorScheme == .dark ? .white : .primary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(
-                LinearGradient(
-                    colors: colorScheme == .dark
-                        ? [
-                            Color(red: 0.10, green: 0.12, blue: 0.14),
-                            Color(red: 0.16, green: 0.19, blue: 0.22),
-                        ]
-                        : [
-                            Color(red: 0.98, green: 0.92, blue: 0.82).opacity(0.98),
-                            Color(red: 0.93, green: 0.90, blue: 0.88).opacity(0.98),
-                        ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
+        ZStack(alignment: .top) {
+            LinearGradient(
+                colors: colorScheme == .dark
+                    ? [
+                        Color(red: 0.10, green: 0.12, blue: 0.14),
+                        Color(red: 0.16, green: 0.19, blue: 0.22),
+                    ]
+                    : [
+                        Color(red: 0.98, green: 0.92, blue: 0.82).opacity(0.98),
+                        Color(red: 0.93, green: 0.90, blue: 0.88).opacity(0.98),
+                    ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
+
+            contentLayout
+                .foregroundStyle(colorScheme == .dark ? .white : .primary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
         #if os(macOS)
         .frame(minHeight: 680)
         #endif
@@ -60,8 +61,11 @@ struct TranslationView: View {
     private var contentLayout: some View {
         #if os(iOS)
         GeometryReader { proxy in
+            let contentTopPadding: CGFloat = 8
+            let contentBottomPadding: CGFloat = 2
             let verticalGap: CGFloat = 14
-            let splitHeight = max(116, ((proxy.size.height - verticalGap) / 2) - 24)
+            let availableHeight = max(0, proxy.size.height - contentTopPadding - contentBottomPadding)
+            let splitHeight = max(140, (availableHeight - verticalGap) / 2)
 
             VStack(alignment: .leading, spacing: 14) {
                 if isWideIOSLayout {
@@ -75,7 +79,6 @@ struct TranslationView: View {
                             .frame(height: splitHeight)
                         outputCard
                             .frame(height: splitHeight)
-                            .offset(y: -outputStatusReservedHeight)
                     }
                 }
 
@@ -85,8 +88,8 @@ struct TranslationView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.horizontal, 12)
-            .padding(.top, 48)
-            .padding(.bottom, 8)
+            .padding(.top, contentTopPadding)
+            .padding(.bottom, contentBottomPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         #else
@@ -267,7 +270,7 @@ struct TranslationView: View {
                 #if os(iOS)
                 .frame(maxHeight: .infinity, alignment: .top)
                 #else
-                .frame(height: editorMinHeight)
+                .frame(minHeight: editorMinHeight, maxHeight: .infinity, alignment: .top)
                 #endif
                 .padding(8)
                 .font(.body)
@@ -284,13 +287,9 @@ struct TranslationView: View {
                 )
                 #endif
 
-            #if os(iOS)
-            Color.clear
-                .frame(height: outputStatusReservedHeight)
-            #endif
         }
         .padding(cardOuterPadding)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         #if os(iOS)
         .background(Color.clear)
         #else
@@ -352,8 +351,9 @@ struct TranslationView: View {
             #if os(iOS)
             .frame(maxHeight: .infinity, alignment: .top)
             #else
-            .frame(height: editorMinHeight)
+            .frame(minHeight: editorMinHeight, maxHeight: .infinity, alignment: .top)
             #endif
+            .clipped()
             #if os(iOS)
             .background(colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30))
             .overlay(
@@ -368,7 +368,7 @@ struct TranslationView: View {
             #endif
         }
         .padding(cardOuterPadding)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         #if os(iOS)
         .background(Color.clear)
         #else
