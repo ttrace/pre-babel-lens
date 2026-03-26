@@ -1,35 +1,25 @@
-import Social
 import UniformTypeIdentifiers
 import UIKit
 
-final class ShareViewController: SLComposeServiceViewController {
-    override func isContentValid() -> Bool {
-        true
-    }
+final class ShareViewController: UIViewController {
+    private let cardView = UIView()
+    private let previewTextView = UITextView()
+    private let reserveButton = UIButton(type: .system)
+    private let cancelButton = UIButton(type: .system)
+    private let buttonStack = UIStackView()
+    private let contentStack = UIStackView()
+    private var sharedText: String = ""
 
-    override func didSelectPost() {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        configureUI()
         Task { @MainActor in
-            let shared = await composeSharedText()
-            if !shared.isEmpty {
-                SharedImportStore.savePendingText(shared)
-                openHostApp(with: shared)
-            }
-            extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+            await loadSharedText()
         }
-    }
-
-    override func configurationItems() -> [Any]! {
-        []
     }
 
     private func composeSharedText() async -> String {
         var fragments: [String] = []
-
-        let composerText = contentText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !composerText.isEmpty {
-            fragments.append(composerText)
-        }
-
         let attachmentText = await collectAttachmentText()
         if !attachmentText.isEmpty {
             fragments.append(attachmentText)
@@ -38,7 +28,7 @@ final class ShareViewController: SLComposeServiceViewController {
         return fragments
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
+            .joined(separator: "\n")
     }
 
     private func collectAttachmentText() async -> String {
@@ -136,15 +126,173 @@ final class ShareViewController: SLComposeServiceViewController {
         return nil
     }
 
-    private func openHostApp(with text: String) {
+    @MainActor
+    private func openHostApp(with text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+
         let capped = String(trimmed.prefix(1500))
-        let encoded = capped.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let urlString = encoded.isEmpty
-            ? "prebabellens://import-shared"
-            : "prebabellens://import-shared?text=\(encoded)"
-        guard let url = URL(string: urlString) else { return }
-        extensionContext?.open(url, completionHandler: nil)
+        guard let primaryURL = makeImportURL(text: capped) else { return }
+
+        let openedPrimary = await requestOpen(primaryURL)
+        if openedPrimary { return }
+
+        guard let fallbackURL = URL(string: "prebabellens://import-shared") else { return }
+        _ = await requestOpen(fallbackURL)
+    }
+
+    private func makeImportURL(text: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "prebabellens"
+        components.host = "import-shared"
+        if !text.isEmpty {
+            components.queryItems = [URLQueryItem(name: "text", value: text)]
+        }
+        return components.url
+    }
+
+    @MainActor
+    private func requestOpen(_ url: URL) async -> Bool {
+        guard let context = extensionContext else { return false }
+        return await withCheckedContinuation { continuation in
+            context.open(url) { opened in
+                continuation.resume(returning: opened)
+            }
+        }
+    }
+
+    @MainActor
+    private func presentReservationCompletedAlert() {
+        let alert = UIAlertController(
+            title: nil,
+            message: localizedReservationCompletedMessage,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: localizedOKLabel, style: .default) { [weak self] _ in
+            self?.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+        })
+        present(alert, animated: true)
+    }
+
+    private var localizedPreserveLabel: String {
+        isJapaneseLocale ? "予約" : "Preserve"
+    }
+
+    private var localizedReservationCompletedMessage: String {
+        isJapaneseLocale ? "予約完了。Pre-Babel Lensを開いてください" : "Reserved. Please open Pre-Babel Lens."
+    }
+
+    private var localizedOKLabel: String {
+        isJapaneseLocale ? "OK" : "OK"
+    }
+
+    private var isJapaneseLocale: Bool {
+        Locale.preferredLanguages.first?.hasPrefix("ja") == true
+    }
+
+    @MainActor
+    private func loadSharedText() async {
+        let text = await composeSharedText()
+        sharedText = text
+        previewTextView.text = text.isEmpty ? localizedNoTextMessage : text
+        reserveButton.isEnabled = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    @objc
+    private func didTapReserve() {
+        Task { @MainActor in
+            let trimmed = sharedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            reserveButton.isEnabled = false
+            SharedImportStore.savePendingText(trimmed)
+            await openHostApp(with: trimmed)
+            presentReservationCompletedAlert()
+        }
+    }
+
+    @objc
+    private func didTapCancel() {
+        extensionContext?.cancelRequest(withError: NSError(domain: "PreBabelLensShare", code: 0, userInfo: nil))
+    }
+
+    private func configureUI() {
+        view.backgroundColor = UIColor.black.withAlphaComponent(0.32)
+
+        cardView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.backgroundColor = .secondarySystemBackground
+        cardView.layer.cornerRadius = 18
+        cardView.clipsToBounds = true
+        view.addSubview(cardView)
+
+        buttonStack.translatesAutoresizingMaskIntoConstraints = false
+        buttonStack.axis = .horizontal
+        buttonStack.alignment = .fill
+        buttonStack.distribution = .fillEqually
+        buttonStack.spacing = 10
+
+        configureButton(cancelButton, title: localizedCancelLabel, isPrimary: false, action: #selector(didTapCancel))
+        configureButton(reserveButton, title: localizedPreserveLabel, isPrimary: true, action: #selector(didTapReserve))
+        reserveButton.isEnabled = false
+
+        buttonStack.addArrangedSubview(cancelButton)
+        buttonStack.addArrangedSubview(reserveButton)
+
+        previewTextView.translatesAutoresizingMaskIntoConstraints = false
+        previewTextView.backgroundColor = .clear
+        previewTextView.isEditable = false
+        previewTextView.text = localizedLoadingMessage
+        previewTextView.font = UIFont.preferredFont(forTextStyle: .body)
+        previewTextView.textColor = .label
+
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.axis = .vertical
+        contentStack.spacing = 16
+        contentStack.addArrangedSubview(buttonStack)
+        contentStack.addArrangedSubview(previewTextView)
+
+        cardView.addSubview(contentStack)
+
+        NSLayoutConstraint.activate([
+            cardView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            cardView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            cardView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+
+            contentStack.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 16),
+            contentStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
+            contentStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
+            contentStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -16),
+
+            previewTextView.heightAnchor.constraint(greaterThanOrEqualToConstant: 110),
+        ])
+    }
+
+    private func configureButton(_ button: UIButton, title: String, isPrimary: Bool, action: Selector) {
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle(title, for: .normal)
+        button.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        button.layer.cornerRadius = 20
+        button.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        button.addTarget(self, action: action, for: .touchUpInside)
+
+        if isPrimary {
+            button.backgroundColor = .systemBlue
+            button.setTitleColor(.white, for: .normal)
+            button.setTitleColor(.white.withAlphaComponent(0.6), for: .disabled)
+        } else {
+            button.backgroundColor = .systemGray5
+            button.setTitleColor(.label, for: .normal)
+        }
+    }
+
+    private var localizedLoadingMessage: String {
+        isJapaneseLocale ? "読み込み中..." : "Loading..."
+    }
+
+    private var localizedNoTextMessage: String {
+        isJapaneseLocale ? "共有可能なテキストが見つかりませんでした。" : "No shareable text was found."
+    }
+
+    private var localizedCancelLabel: String {
+        isJapaneseLocale ? "キャンセル" : "Cancel"
     }
 }

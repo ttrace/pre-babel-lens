@@ -35,6 +35,7 @@ final class TranslationViewModel: ObservableObject {
     private var partialTranslationsBySegment: [Int: String] = [:]
     private var partialJoinersAfter: [String] = []
     private var lastHandledIncomingURLKey: String?
+    private var lastHandledSharedImportKey: String?
     private var activeTranslationTask: Task<Void, Never>?
     private var activeTranslationToken: UUID?
     private var pendingTranslationRequestStartedAt: Date?
@@ -84,6 +85,20 @@ final class TranslationViewModel: ObservableObject {
     func handleDoubleCopyText(_ text: String) async {
         await handleExternalTriggerText(text, source: "double-copy")
     }
+
+    #if os(iOS)
+    @discardableResult
+    func importSharedTextIfNeeded() -> String? {
+        guard let text = SharedImportStore.consumePendingText() else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard lastHandledSharedImportKey != trimmed else { return nil }
+        lastHandledSharedImportKey = trimmed
+        inputText = trimmed
+        appendDeveloperLog("Incoming share-store accepted. chars=\(trimmed.count)")
+        return trimmed
+    }
+    #endif
 
     private func handleExternalTriggerText(_ text: String, source: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -10,6 +10,9 @@ struct TranslationView: View {
     // #region MARK: MARK:State
     @StateObject private var viewModel: TranslationViewModel
     @AppStorage("developerModeEnabled") private var developerModeEnabled: Bool = false
+    @AppStorage("autoTranslateImportedTextEnabled") private var autoTranslateImportedTextEnabled: Bool = false
+    @State private var importToastMessage: String?
+    @State private var toastDismissTask: Task<Void, Never>?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     // #endregion
@@ -41,6 +44,18 @@ struct TranslationView: View {
             contentLayout
                 .foregroundStyle(colorScheme == .dark ? .white : .primary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+            #if os(iOS)
+            if let importToastMessage {
+                VStack {
+                    Spacer()
+                    importToast(text: importToastMessage)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 28)
+                }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            #endif
         }
         #if os(macOS)
         .frame(minHeight: 680)
@@ -50,9 +65,16 @@ struct TranslationView: View {
                 if viewModel.consumeLaunchActivationRequest() {
                     NSApp.activate(ignoringOtherApps: true)
                 }
+            #elseif os(iOS)
+                handleSharedImportIfNeeded()
             #endif
             await viewModel.translateIfNeededOnLaunch()
         }
+        #if os(iOS)
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            handleSharedImportIfNeeded()
+        }
+        #endif
     }
     // #endregion
 
@@ -179,6 +201,7 @@ struct TranslationView: View {
     @ViewBuilder
     private func settingsMenu(iconSize: CGFloat, frameSize: CGFloat) -> some View {
         Menu {
+            Toggle(autoTranslateToggleTitle, isOn: $autoTranslateImportedTextEnabled)
             Toggle("Developer Mode", isOn: $developerModeEnabled)
         } label: {
             Image(systemName: "gearshape.fill")
@@ -524,4 +547,50 @@ struct TranslationView: View {
         #endif
     }
     // #endregion
+
+    #if os(iOS)
+    @ViewBuilder
+    private func importToast(text: String) -> some View {
+        Text(text)
+            .font(.system(size: 14, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .background(Color.black.opacity(0.82), in: Capsule())
+    }
+
+    private func handleSharedImportIfNeeded() {
+        guard viewModel.importSharedTextIfNeeded() != nil else { return }
+        showImportToast()
+        guard autoTranslateImportedTextEnabled else { return }
+        Task { await viewModel.translate() }
+    }
+
+    private func showImportToast() {
+        toastDismissTask?.cancel()
+        importToastMessage = sharedImportToastTitle
+        toastDismissTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    importToastMessage = nil
+                }
+            }
+        }
+    }
+
+    private var autoTranslateToggleTitle: String {
+        isJapaneseLocale ? "共有取り込み後に自動翻訳" : "Auto Translate After Import"
+    }
+
+    private var sharedImportToastTitle: String {
+        isJapaneseLocale ? "共有テキストを取り込みました" : "Shared text imported."
+    }
+    #endif
+
+    private var isJapaneseLocale: Bool {
+        Locale.preferredLanguages.first?.hasPrefix("ja") == true
+    }
 }
