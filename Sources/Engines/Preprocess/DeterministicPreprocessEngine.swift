@@ -218,6 +218,12 @@ enum SentenceSegmenter {
 
         while cursor < lines.count {
             let current = lines[cursor]
+            if isBylineLeadLine(current) {
+                append(lines: lines, start: cursor, end: cursor + 1, kind: .general, to: &segments)
+                cursor += 1
+                continue
+            }
+
             if isDialogueLine(current) {
                 let end = runEnd(from: cursor, in: lines, where: isDialogueLine)
                 let safeEnd = max(cursor + 1, min(end, lines.count))
@@ -246,6 +252,9 @@ enum SentenceSegmenter {
 
             var generalEnd = cursor + 1
             while generalEnd < lines.count {
+                if isBylineLeadLine(lines[generalEnd]) {
+                    break
+                }
                 if isDialogueLine(lines[generalEnd]) {
                     break
                 }
@@ -349,6 +358,22 @@ enum SentenceSegmenter {
         return wordCount(in: trimmed) <= 15
     }
 
+    private static func isBylineLeadLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        guard wordCount(in: trimmed) <= 12 else { return false }
+
+        let lowered = trimmed.lowercased()
+        for marker in bylineLeadWords {
+            if lowered == marker { continue }
+            if lowered.hasPrefix(marker + " ") || lowered.hasPrefix(marker + ":") {
+                return true
+            }
+        }
+
+        return false
+    }
+
     private static func endsWithPeriod(_ line: String) -> Bool {
         guard let last = line.last else { return false }
         return last == "." || last == "。"
@@ -363,6 +388,18 @@ enum SentenceSegmenter {
     private static let dialogueLineRegex = try! NSRegularExpression(
         pattern: #"^\s*(?:(?:[-—•*]\s+\S)|(?:[「『“"']\S)|(?:[A-Za-z][A-Za-z0-9 _-]{0,20}:\s))"#
     )
+
+    // Conservative byline markers for line-initial "By ..." style credits.
+    private static let bylineLeadWords: Set<String> = [
+        "by",      // English
+        "por",     // Spanish / Portuguese
+        "par",     // French
+        "von",     // German
+        "door",    // Dutch
+        "av",      // Swedish / Norwegian / Danish
+        "af",      // Danish/Norwegian variant
+        "od",      // Polish/Czech/Slovak style variant
+    ]
 }
 
 private struct KindedSegment {
