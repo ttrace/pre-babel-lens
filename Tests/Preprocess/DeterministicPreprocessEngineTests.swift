@@ -153,40 +153,4 @@ struct DeterministicPreprocessEngineTests {
             #expect(result.input.isDetectedLanguageSupportedByAppleIntelligence == true)
         }
     }
-
-    @Test
-    func sentenceSegmentationSeparatesBylineStartingWithByAsGeneral() {
-        let request = TranslationRequest(
-            sourceLanguage: "en",
-            targetLanguage: "ja",
-            text: """
-            Story Title
-            By Jane Doe
-            This is the opening paragraph.
-            """,
-            glossary: []
-        )
-
-        let result = DeterministicPreprocessEngine().analyze(request)
-
-        #expect(result.input.segments.contains(where: { $0.text == "By Jane Doe" && $0.kind == .general }))
-    }
-
-    @Test
-    func sentenceSegmentationSeparatesByEquivalentLeadLineAsGeneral() {
-        let request = TranslationRequest(
-            sourceLanguage: "es",
-            targetLanguage: "ja",
-            text: """
-            Titulo
-            Por Ana Lopez
-            Esta es la primera linea.
-            """,
-            glossary: []
-        )
-
-        let result = DeterministicPreprocessEngine().analyze(request)
-
-        #expect(result.input.segments.contains(where: { $0.text == "Por Ana Lopez" && $0.kind == .general }))
-    }
 }

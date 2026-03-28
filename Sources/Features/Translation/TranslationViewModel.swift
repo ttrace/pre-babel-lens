@@ -120,16 +120,27 @@ final class TranslationViewModel: ObservableObject {
     }
 
     func stopTranslation() {
-        activeTranslationTask?.cancel()
+        let taskToDrain = activeTranslationTask
+        taskToDrain?.cancel()
         activeTranslationTask = nil
         activeTranslationToken = nil
         isTranslating = false
         status = .stopped
         appendDeveloperLog("Translation stopped by user.")
+
+        if let taskToDrain {
+            Task { @MainActor [weak self] in
+                await taskToDrain.value
+                self?.appendDeveloperLog("Previous translation task drained after stop.")
+            }
+        }
     }
 
     private func runManagedTranslation() async {
-        activeTranslationTask?.cancel()
+        if let previousTask = activeTranslationTask {
+            previousTask.cancel()
+            await previousTask.value
+        }
         let token = UUID()
         activeTranslationToken = token
         let task = Task { @MainActor [weak self] in
@@ -196,11 +207,11 @@ final class TranslationViewModel: ObservableObject {
         do {
             let output = try await orchestrator.translate(
                 request,
-                onSessionStarted: { [weak self] segmentCount, detectedLanguageCode, targetLanguage, kindSummary in
+                onSessionStarted: { [weak self] segmentCount, tokenizerSentenceCount, detectedLanguageCode, targetLanguage, kindSummary in
                     Task { @MainActor in
                         guard let self else { return }
                         self.appendSessionLog(
-                            "session-start: segments=\(segmentCount), detected=\(detectedLanguageCode.isEmpty ? "none" : detectedLanguageCode), target=\(targetLanguage), kinds={\(kindSummary)}"
+                            "session-start: segments=\(segmentCount), tokenizer-sentences=\(tokenizerSentenceCount), detected=\(detectedLanguageCode.isEmpty ? "none" : detectedLanguageCode), target=\(targetLanguage), kinds={\(kindSummary)}"
                         )
                         self.recordSessionStarted()
                     }
@@ -342,7 +353,7 @@ final class TranslationViewModel: ObservableObject {
     }
 
     private func appendDeveloperLog(_ message: String) {
-        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let timestamp = Date().ISO8601Format()
         developerLogs.append("[\(timestamp)] \(message)")
         if developerLogs.count > 300 {
             developerLogs.removeFirst(developerLogs.count - 300)

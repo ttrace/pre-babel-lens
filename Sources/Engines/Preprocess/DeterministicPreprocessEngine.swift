@@ -166,44 +166,38 @@ enum SentenceSegmenter {
         guard !trimmed.isEmpty else {
             return SegmentationResult(segments: [], joinersAfter: [])
         }
-
+        let blocks = splitByBlankLines(in: trimmed)
         var segments: [TextSegment] = []
         var joinersAfter: [String] = []
 
-        let blocks = splitByBlankLines(in: trimmed)
         for block in blocks {
-            let blockSegments = segmentBlock(block.text)
-            guard !blockSegments.isEmpty else {
-                if !joinersAfter.isEmpty {
-                    joinersAfter[joinersAfter.count - 1] += block.delimiterAfter
-                }
-                continue
-            }
-
-            for (indexInBlock, blockSegment) in blockSegments.enumerated() {
+            let kindedSegments = segmentBlock(block.text)
+            if kindedSegments.isEmpty {
+                let fallback = block.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !fallback.isEmpty else { continue }
                 segments.append(
                     TextSegment(
                         index: segments.count,
-                        text: blockSegment.text,
-                        kind: blockSegment.kind
+                        text: fallback,
+                        kind: .general
                     )
                 )
-                let intraBlockJoiner = indexInBlock < blockSegments.count - 1 ? "\n" : ""
-                joinersAfter.append(intraBlockJoiner)
+                joinersAfter.append(block.delimiterAfter)
+                continue
             }
 
-            joinersAfter[joinersAfter.count - 1] += block.delimiterAfter
-        }
-
-        if segments.isEmpty {
-            return SegmentationResult(
-                segments: [TextSegment(index: 0, text: trimmed)],
-                joinersAfter: [""]
-            )
-        }
-
-        if joinersAfter.count < segments.count {
-            joinersAfter.append(contentsOf: Array(repeating: "", count: segments.count - joinersAfter.count))
+            for index in kindedSegments.indices {
+                let kinded = kindedSegments[index]
+                segments.append(
+                    TextSegment(
+                        index: segments.count,
+                        text: kinded.text,
+                        kind: kinded.kind
+                    )
+                )
+                let isLastInBlock = index == kindedSegments.index(before: kindedSegments.endIndex)
+                joinersAfter.append(isLastInBlock ? block.delimiterAfter : "\n")
+            }
         }
 
         return SegmentationResult(segments: segments, joinersAfter: joinersAfter)
@@ -218,12 +212,6 @@ enum SentenceSegmenter {
 
         while cursor < lines.count {
             let current = lines[cursor]
-            if isBylineLeadLine(current) {
-                append(lines: lines, start: cursor, end: cursor + 1, kind: .general, to: &segments)
-                cursor += 1
-                continue
-            }
-
             if isDialogueLine(current) {
                 let end = runEnd(from: cursor, in: lines, where: isDialogueLine)
                 let safeEnd = max(cursor + 1, min(end, lines.count))
@@ -252,9 +240,6 @@ enum SentenceSegmenter {
 
             var generalEnd = cursor + 1
             while generalEnd < lines.count {
-                if isBylineLeadLine(lines[generalEnd]) {
-                    break
-                }
                 if isDialogueLine(lines[generalEnd]) {
                     break
                 }
@@ -348,7 +333,18 @@ enum SentenceSegmenter {
     private static func isTwoWordsOrFewerLine(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        return wordCount(in: trimmed) <= 2
+        if containsSentencePunctuation(trimmed) {
+            return false
+        }
+
+        if containsCJK(trimmed) {
+            // Japanese/CJK lines often have no spaces, so word-count heuristics overfit.
+            // Keep ui-label classification only for very short labels.
+            return trimmed.count <= 10
+        }
+
+        // Non-CJK short labels (button/menu labels etc.)
+        return wordCount(in: trimmed) <= 2 && trimmed.count <= 36
     }
 
     private static func isShortNonPeriodLine(_ line: String) -> Bool {
@@ -356,22 +352,6 @@ enum SentenceSegmenter {
         guard !trimmed.isEmpty else { return false }
         guard !endsWithPeriod(trimmed) else { return false }
         return wordCount(in: trimmed) <= 15
-    }
-
-    private static func isBylineLeadLine(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        guard wordCount(in: trimmed) <= 12 else { return false }
-
-        let lowered = trimmed.lowercased()
-        for marker in bylineLeadWords {
-            if lowered == marker { continue }
-            if lowered.hasPrefix(marker + " ") || lowered.hasPrefix(marker + ":") {
-                return true
-            }
-        }
-
-        return false
     }
 
     private static func endsWithPeriod(_ line: String) -> Bool {
@@ -385,21 +365,27 @@ enum SentenceSegmenter {
             .count
     }
 
+    private static func containsSentencePunctuation(_ line: String) -> Bool {
+        line.contains { "。．.!?！？".contains($0) }
+    }
+
+    private static func containsCJK(_ line: String) -> Bool {
+        line.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3040...0x30FF, // Hiragana + Katakana
+                 0x3400...0x4DBF, // CJK Extension A
+                 0x4E00...0x9FFF, // CJK Unified Ideographs
+                 0xF900...0xFAFF: // CJK Compatibility Ideographs
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
     private static let dialogueLineRegex = try! NSRegularExpression(
         pattern: #"^\s*(?:(?:[-—•*]\s+\S)|(?:[「『“"']\S)|(?:[A-Za-z][A-Za-z0-9 _-]{0,20}:\s))"#
     )
-
-    // Conservative byline markers for line-initial "By ..." style credits.
-    private static let bylineLeadWords: Set<String> = [
-        "by",      // English
-        "por",     // Spanish / Portuguese
-        "par",     // French
-        "von",     // German
-        "door",    // Dutch
-        "av",      // Swedish / Norwegian / Danish
-        "af",      // Danish/Norwegian variant
-        "od",      // Polish/Czech/Slovak style variant
-    ]
 }
 
 private struct KindedSegment {

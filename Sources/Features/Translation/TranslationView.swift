@@ -10,6 +10,7 @@ struct TranslationView: View {
     // #region MARK: MARK:State
     @StateObject private var viewModel: TranslationViewModel
     @AppStorage("developerModeEnabled") private var developerModeEnabled: Bool = false
+    @AppStorage("developerVerboseModeEnabled") private var developerVerboseModeEnabled: Bool = false
     @AppStorage("autoTranslateImportedTextEnabled") private var autoTranslateImportedTextEnabled: Bool = false
     @State private var importToastMessage: String?
     @State private var toastDismissTask: Task<Void, Never>?
@@ -205,6 +206,9 @@ struct TranslationView: View {
             Toggle(autoTranslateToggleTitle, isOn: $autoTranslateImportedTextEnabled)
             #endif
             Toggle("Developer Mode", isOn: $developerModeEnabled)
+            if developerModeEnabled {
+                Toggle("Verbose Console", isOn: $developerVerboseModeEnabled)
+            }
         } label: {
             Image(systemName: "gearshape.fill")
                 .font(.system(size: iconSize, weight: .semibold))
