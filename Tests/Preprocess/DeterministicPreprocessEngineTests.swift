@@ -3,39 +3,44 @@ import Testing
 
 struct DeterministicPreprocessEngineTests {
     @Test
-    func sentenceSegmentationUsesExplicitBoundariesOnly() {
+    func sentenceSegmentationGroupsSentencesByCharacterThreshold() {
+        let sentenceA = String(repeating: "A", count: 130) + "."
+        let sentenceB = String(repeating: "B", count: 130) + "."
+        let sentenceC = "Tail."
         let request = TranslationRequest(
             sourceLanguage: "en",
             targetLanguage: "ja",
-            text: "This is a first sentence. Still same context.\n\nThis starts a new explicit block.",
+            text: "\(sentenceA) \(sentenceB) \(sentenceC)",
             glossary: []
         )
 
         let result = DeterministicPreprocessEngine().analyze(request)
 
         #expect(result.input.segments.count == 2)
-        #expect(result.input.segments[0].text.contains("Still same context."))
-        #expect(result.input.segments[1].text == "This starts a new explicit block.")
+        #expect(result.input.segments[0].text == sentenceA)
+        #expect(result.input.segments[1].text.contains(sentenceB))
+        #expect(result.input.segments[1].text.contains(sentenceC))
     }
 
     @Test
-    func sentenceSegmentationSplitsDialogueLines() {
+    func sentenceSegmentationPreservesNewlineAndIndentInsideSegment() {
         let request = TranslationRequest(
             sourceLanguage: "en",
             targetLanguage: "ja",
             text: """
-            Narrative lead.
-            - Speaker A: Hello.
-            - Speaker B: Hi.
+            Line one.
+
+                Line two.
+            Line three.
             """,
             glossary: []
         )
 
         let result = DeterministicPreprocessEngine().analyze(request)
 
-        #expect(result.input.segments.count >= 2)
-        #expect(result.input.segments.contains(where: { $0.text.contains("Speaker A: Hello.") }))
-        #expect(result.input.segments.contains(where: { $0.text.contains("Speaker B: Hi.") }))
+        #expect(result.input.segments.count == 1)
+        #expect(result.input.segmentJoinersAfter.count == 1)
+        #expect(result.input.segments[0].text.contains("\n\n    Line two."))
     }
 
     @Test

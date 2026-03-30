@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 enum TranslationPipelineError: LocalizedError {
     case unsupportedAppleIntelligenceLanguage(detectedLanguageCode: String)
@@ -24,7 +25,7 @@ struct TranslationOrchestrator: Sendable {
 
     func translate(
         _ request: TranslationRequest,
-        onSessionStarted: (@Sendable (_ segmentCount: Int, _ detectedLanguageCode: String, _ targetLanguage: String, _ kindSummary: String) -> Void)? = nil,
+        onSessionStarted: (@Sendable (_ segmentCount: Int, _ tokenizerSentenceCount: Int, _ detectedLanguageCode: String, _ targetLanguage: String, _ kindSummary: String) -> Void)? = nil,
         onDiagnosticEvent: (@Sendable (_ message: String) -> Void)? = nil,
         onPartialSegmentResult: (@Sendable (_ segmentIndex: Int, _ partialTranslation: String, _ joinersAfter: [String]) -> Void)? = nil,
         onSessionFinished: (@Sendable () -> Void)? = nil
@@ -41,8 +42,10 @@ struct TranslationOrchestrator: Sendable {
         }
 
         let kindSummary = summarizeKinds(input.segments)
+        let tokenizerSentenceCount = sentenceCountByNLTokenizer(for: input.originalText)
         onSessionStarted?(
             input.segments.count,
+            tokenizerSentenceCount,
             input.detectedLanguageCode ?? input.sourceLanguage,
             request.targetLanguage,
             kindSummary
@@ -134,5 +137,21 @@ struct TranslationOrchestrator: Sendable {
             return "\(kind.rawValue)=\(count)"
         }
         .joined(separator: ", ")
+    }
+
+    private func sentenceCountByNLTokenizer(for text: String) -> Int {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = trimmed
+
+        var count = 0
+        tokenizer.enumerateTokens(in: trimmed.startIndex..<trimmed.endIndex) { _, _ in
+            count += 1
+            return true
+        }
+
+        return max(1, count)
     }
 }

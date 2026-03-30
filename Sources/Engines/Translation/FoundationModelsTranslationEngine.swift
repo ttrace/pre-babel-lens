@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 struct FoundationModelsTranslationEngine: DiagnosticCapableTranslationEngine {
     var name: String {
@@ -78,21 +79,73 @@ private enum FoundationModelsIntegrationError: LocalizedError {
 import FoundationModels
 
 @available(macOS 26.0, iOS 26.0, *)
+private actor FoundationModelsTranslationGate {
+    private struct Waiter {
+        var id: UUID
+        var continuation: CheckedContinuation<Void, Error>
+    }
+
+    private var isLocked = false
+    private var waiters: [Waiter] = []
+
+    func withLock<T>(_ operation: () async throws -> T) async throws -> T {
+        try Task.checkCancellation()
+        try await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        return try await operation()
+    }
+
+    private func acquire() async throws {
+        if !isLocked {
+            isLocked = true
+            return
+        }
+
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters.append(Waiter(id: waiterID, continuation: continuation))
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id: waiterID) }
+        }
+    }
+
+    private func release() {
+        if waiters.isEmpty {
+            isLocked = false
+            return
+        }
+
+        let next = waiters.removeFirst().continuation
+        next.resume(returning: ())
+    }
+
+    private func cancelWaiter(id: UUID) {
+        guard let idx = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: idx)
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+}
+
+@available(macOS 26.0, iOS 26.0, *)
 private enum FoundationModelsRuntimeTranslator {
+    private static let lineBreakMarker = "</br>"
+    private static let translationGate = FoundationModelsTranslationGate()
+
     @available(macOS 26.0, iOS 26.0, *)
     @Generable
     struct StructuredTranslationPayload {
         @Guide(description: "Target language code.")
         var targetLanguage: String
-        @Guide(description: "Segment kind label.")
-        var kind: String
-        @Guide(description: "Translated text only.")
+        @Guide(description: "Translated HTML-like text only in the language specified by `targetLanguage`. Keep the same sentence count as the source text. STYLE REQUIREMENT: Preserve all `</br>` tokens exactly as in source (same count, same position even on the line head).")
         var translation: String
     }
 
     private struct StructuredTranslationResult {
         var translation: String
-        var kind: SegmentKind?
+        var outputBreakTagCount: Int
     }
 
     static func translate(
@@ -100,121 +153,190 @@ private enum FoundationModelsRuntimeTranslator {
         onPartialResult: (@Sendable (_ segmentIndex: Int, _ partialTranslation: String) -> Void)? = nil,
         onDiagnosticEvent: (@Sendable (_ message: String) -> Void)? = nil
     ) async throws -> [SegmentOutput] {
-        try ensureModelAvailability()
+        try await translationGate.withLock {
+            try ensureModelAvailability()
 
-        let segments = input.segments.isEmpty
-            ? [TextSegment(index: 0, text: input.originalText)]
-            : input.segments
+            let segments = input.segments.isEmpty
+                ? [TextSegment(index: 0, text: input.originalText)]
+                : input.segments
 
-        let session = LanguageModelSession(instructions: instructions(for: input))
-        let sensitiveContentSession = LanguageModelSession(
-            instructions: sensitiveContentSafeInstructions(for: input)
-        )
-        var outputs: [SegmentOutput] = []
-        outputs.reserveCapacity(segments.count)
+            // Reuse one session per translation request to reduce per-segment setup overhead.
+            var session = LanguageModelSession(instructions: instructions(for: input))
 
-        for segment in segments {
-            let prompt = promptForSegment(segment, input: input)
-            let finalResult: StructuredTranslationResult
+            var outputs: [SegmentOutput] = []
+            outputs.reserveCapacity(segments.count)
 
-            do {
-                finalResult = try await translateStructuredSegmentWithRetry(
-                    prompt: prompt,
-                    sourceText: segment.text,
-                    expectedTargetLanguage: input.targetLanguage,
-                    expectedKind: segment.kind,
-                    using: session,
-                    segmentIndex: segment.index,
-                    onPartialResult: onPartialResult,
-                    onDiagnosticEvent: onDiagnosticEvent
-                )
-            } catch {
-                if shouldRetryOrFallbackForGeneration(error) {
-                    onDiagnosticEvent?(
-                        "segment=\(segment.index), kind=\(segment.kind.rawValue): fallback-session-triggered (\(error.localizedDescription))"
-                    )
-                    let safePrompt = promptForSensitiveContentSegment(segment, input: input)
-                    finalResult = await fallbackSafeSegmentTranslation(
-                        safePrompt: safePrompt,
+            for segment in segments {
+                try Task.checkCancellation()
+                let prompt = promptForSegment(segment, input: input)
+                var finalResult: StructuredTranslationResult
+                var shouldSkipSentenceDropRetry = false
+
+                do {
+                    finalResult = try await translateStructuredSegmentWithRetry(
+                        prompt: prompt,
                         sourceText: segment.text,
                         expectedTargetLanguage: input.targetLanguage,
-                        expectedKind: segment.kind,
-                        session: sensitiveContentSession,
+                        preprocessKind: segment.kind,
+                        using: session,
                         segmentIndex: segment.index,
                         onPartialResult: onPartialResult,
                         onDiagnosticEvent: onDiagnosticEvent
                     )
-                } else {
-                    throw error
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    if isUnsafeContentError(error) {
+                        shouldSkipSentenceDropRetry = true
+                        onDiagnosticEvent?(
+                            "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): unsafe-no-retry-source-returned (\(error.localizedDescription))"
+                        )
+                        finalResult = StructuredTranslationResult(
+                            translation: sourceFallbackTranslation(
+                                sourceText: segment.text,
+                                error: error
+                            ),
+                            outputBreakTagCount: 0
+                        )
+                    } else if isContextWindowExceededError(error) {
+                        onDiagnosticEvent?(
+                            "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): context-window-exceeded-refresh-session-and-retry"
+                        )
+                        session = LanguageModelSession(instructions: instructions(for: input))
+                        do {
+                            finalResult = try await translateStructuredSegmentWithRetry(
+                                prompt: prompt,
+                                sourceText: segment.text,
+                                expectedTargetLanguage: input.targetLanguage,
+                                preprocessKind: segment.kind,
+                                using: session,
+                                segmentIndex: segment.index,
+                                onPartialResult: onPartialResult,
+                                onDiagnosticEvent: onDiagnosticEvent
+                            )
+                            onDiagnosticEvent?(
+                                "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): resumed-after-session-refresh"
+                            )
+                        } catch is CancellationError {
+                            throw CancellationError()
+                        } catch {
+                            shouldSkipSentenceDropRetry = isUnsafeContentError(error)
+                            onDiagnosticEvent?(
+                                "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): retry-after-session-refresh-failed-source-returned (\(error.localizedDescription))"
+                            )
+                            finalResult = StructuredTranslationResult(
+                                translation: sourceFallbackTranslation(
+                                    sourceText: segment.text,
+                                    error: error
+                                ),
+                                outputBreakTagCount: 0
+                            )
+                        }
+                    } else {
+                        onDiagnosticEvent?(
+                            "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): no-retry-source-returned (\(error.localizedDescription))"
+                        )
+                        finalResult = StructuredTranslationResult(
+                            translation: sourceFallbackTranslation(
+                                sourceText: segment.text,
+                                error: error
+                            ),
+                            outputBreakTagCount: 0
+                        )
+                    }
                 }
+
+                let inputSentenceCount = sentenceCountByNLTokenizer(segment.text)
+                var outputSentenceCount = sentenceCountByNLTokenizer(finalResult.translation)
+                if !shouldSkipSentenceDropRetry && shouldRetryForSentenceDrop(
+                    inputSentenceCount: inputSentenceCount,
+                    outputSentenceCount: outputSentenceCount
+                ) {
+                    onDiagnosticEvent?(
+                        "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): sentence-count-drop-detected retry-once"
+                    )
+                    do {
+                        let retrySession = LanguageModelSession(instructions: instructions(for: input))
+                        let retryResult = try await translateStructuredSegmentWithRetry(
+                            prompt: prompt,
+                            sourceText: segment.text,
+                            expectedTargetLanguage: input.targetLanguage,
+                            preprocessKind: segment.kind,
+                            using: retrySession,
+                            segmentIndex: segment.index,
+                            onPartialResult: onPartialResult,
+                            onDiagnosticEvent: onDiagnosticEvent
+                        )
+                        finalResult = retryResult
+                        outputSentenceCount = sentenceCountByNLTokenizer(finalResult.translation)
+                        onDiagnosticEvent?(
+                            "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): sentence-count-retry-finished"
+                        )
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        onDiagnosticEvent?(
+                            "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): sentence-count-retry-failed-keep-first (\(error.localizedDescription))"
+                        )
+                    }
+                }
+                let inputBreakCount = lineBreakTagCount(in: sourceTextForPrompt(segment.text))
+                let outputBreakCount = finalResult.outputBreakTagCount
+                onDiagnosticEvent?(
+                    "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue), sentence-counts={input=\(inputSentenceCount), output=\(outputSentenceCount)}, br-counts={input=\(inputBreakCount), output=\(outputBreakCount)}"
+                )
+
+                outputs.append(
+                    SegmentOutput(
+                        segmentIndex: segment.index,
+                        sourceText: segment.text,
+                        translatedText: finalResult.translation
+                    )
+                )
             }
 
-            let structuredKindLogValue = finalResult.kind?.rawValue ?? "n/a"
-            onDiagnosticEvent?(
-                "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue), structured-kind=\(structuredKindLogValue)"
-            )
-
-            outputs.append(
-                SegmentOutput(
-                    segmentIndex: segment.index,
-                    sourceText: segment.text,
-                    translatedText: finalResult.translation
-                )
-            )
+            return outputs
         }
-
-        return outputs
     }
 
     private static func translateStructuredSegmentWithRetry(
         prompt: String,
         sourceText: String,
         expectedTargetLanguage: String,
-        expectedKind: SegmentKind,
+        preprocessKind: SegmentKind,
         using session: LanguageModelSession,
         segmentIndex: Int,
         onPartialResult: (@Sendable (_ segmentIndex: Int, _ partialTranslation: String) -> Void)?,
         onDiagnosticEvent: (@Sendable (_ message: String) -> Void)?
     ) async throws -> StructuredTranslationResult {
+        if verboseLoggingEnabled {
+            let sourceForLog = sanitizedForLog(sourceText) ?? "(empty)"
+            let promptForLog = sanitizedForLog(prompt) ?? "(empty)"
+            onDiagnosticEvent?(
+                "verbose model-input segment=\(segmentIndex), preprocess-kind=\(preprocessKind.rawValue), sourceChars=\(sourceText.count), promptChars=\(prompt.count), source=\(sourceForLog), prompt=\(promptForLog)"
+            )
+        }
         do {
             return try await translateSegment(
                 prompt: prompt,
                 sourceText: sourceText,
                 expectedTargetLanguage: expectedTargetLanguage,
-                expectedKind: expectedKind,
                 using: session,
                 segmentIndex: segmentIndex,
-                onPartialResult: onPartialResult
+                onPartialResult: onPartialResult,
+                onDiagnosticEvent: onDiagnosticEvent
             )
         } catch let error as FoundationModelsStructuredOutputError {
-            if !error.isRetryable {
-                throw error
-            }
-            onDiagnosticEvent?("segment=\(segmentIndex), kind=\(expectedKind.rawValue): structured-output-retry (\(error.localizedDescription))")
-            let strictPrompt = strictPromptForSegment(
-                sourceText: sourceText,
-                expectedTargetLanguage: expectedTargetLanguage,
-                expectedKind: expectedKind
+            onDiagnosticEvent?(
+                "segment=\(segmentIndex), preprocess-kind=\(preprocessKind.rawValue): structured-output-no-retry-source-returned (\(error.localizedDescription))"
             )
-            do {
-                return try await translateSegment(
-                    prompt: strictPrompt,
+            return StructuredTranslationResult(
+                translation: sourceFallbackTranslation(
                     sourceText: sourceText,
-                    expectedTargetLanguage: expectedTargetLanguage,
-                    expectedKind: expectedKind,
-                    using: session,
-                    segmentIndex: segmentIndex,
-                    onPartialResult: onPartialResult
-                )
-            } catch let finalError as FoundationModelsStructuredOutputError {
-                onDiagnosticEvent?(
-                    "segment=\(segmentIndex), kind=\(expectedKind.rawValue): structured-output-final-fallback-source-returned (\(finalError.localizedDescription))"
-                )
-                return StructuredTranslationResult(
-                    translation: sourceText.trimmingCharacters(in: .whitespacesAndNewlines),
-                    kind: nil
-                )
-            }
+                    error: error
+                ),
+                outputBreakTagCount: 0
+            )
         }
     }
 
@@ -222,104 +344,25 @@ private enum FoundationModelsRuntimeTranslator {
         prompt: String,
         sourceText: String,
         expectedTargetLanguage: String,
-        expectedKind: SegmentKind,
         using session: LanguageModelSession,
         segmentIndex: Int,
-        onPartialResult: (@Sendable (_ segmentIndex: Int, _ partialTranslation: String) -> Void)?
+        onPartialResult: (@Sendable (_ segmentIndex: Int, _ partialTranslation: String) -> Void)?,
+        onDiagnosticEvent: (@Sendable (_ message: String) -> Void)?
     ) async throws -> StructuredTranslationResult {
-        var latestCompletePayload: StructuredTranslationPayload?
-        var latestStreamedTranslation: String?
-        var repeatedSnapshotCount = 0
-        let maxAllowedCharacters = max(400, min(8_000, sourceText.count * 12))
-        let maxSnapshotCount = 240
-        let maxStreamingDuration: TimeInterval = 20
-        let streamStartedAt = Date()
-        var receivedSnapshotCount = 0
-
-        do {
-            let stream = session.streamResponse(
-                to: prompt,
-                generating: StructuredTranslationPayload.self,
-                includeSchemaInPrompt: false
-            )
-            for try await snapshot in stream {
-                receivedSnapshotCount += 1
-
-                if latestStreamedTranslation == snapshot.content.translation {
-                    repeatedSnapshotCount += 1
-                } else {
-                    repeatedSnapshotCount = 0
-                }
-
-                if repeatedSnapshotCount >= 12 {
-                    break
-                }
-
-                if receivedSnapshotCount >= maxSnapshotCount {
-                    break
-                }
-
-                if Date().timeIntervalSince(streamStartedAt) >= maxStreamingDuration {
-                    break
-                }
-
-                if snapshot.rawContent.jsonString.count > maxAllowedCharacters {
-                    break
-                }
-
-                if let targetLanguage = snapshot.content.targetLanguage,
-                   let kind = snapshot.content.kind,
-                   let translation = snapshot.content.translation
-                {
-                    latestCompletePayload = StructuredTranslationPayload(
-                        targetLanguage: targetLanguage,
-                        kind: kind,
-                        translation: translation
-                    )
-                }
-
-                let streamedCandidate =
-                    snapshot.content.translation?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    ?? extractPartialTranslation(fromRawJSON: snapshot.rawContent.jsonString)
-
-                if let partial = streamedCandidate,
-                   !partial.isEmpty,
-                   partial != latestStreamedTranslation
-                {
-                    latestStreamedTranslation = partial
-                    onPartialResult?(segmentIndex, partial)
-                }
-            }
-        } catch {
-            if let latestCompletePayload {
-                return try validateStructuredTranslation(
-                    payload: latestCompletePayload,
-                    expectedTargetLanguage: expectedTargetLanguage,
-                    expectedKind: expectedKind
-                )
-            }
-            throw error
-        }
-
-        if let latestCompletePayload {
-            let result = try validateStructuredTranslation(
-                payload: latestCompletePayload,
-                expectedTargetLanguage: expectedTargetLanguage,
-                expectedKind: expectedKind
-            )
-            onPartialResult?(segmentIndex, result.translation)
-            return result
-        }
-
         let response = try await session.respond(
             to: prompt,
             generating: StructuredTranslationPayload.self,
-            includeSchemaInPrompt: false
+            includeSchemaInPrompt: true
         )
+        if verboseLoggingEnabled {
+            let translationForLog = sanitizedForLog(response.content.translation) ?? "(empty)"
+            onDiagnosticEvent?(
+                "verbose model-output segment=\(segmentIndex), payload={targetLanguage=\(response.content.targetLanguage), translationChars=\(response.content.translation.count), translation=\(translationForLog)}"
+            )
+        }
         let result = try validateStructuredTranslation(
             payload: response.content,
-            expectedTargetLanguage: expectedTargetLanguage,
-            expectedKind: expectedKind
+            expectedTargetLanguage: expectedTargetLanguage
         )
         onPartialResult?(segmentIndex, result.translation)
         return result
@@ -388,6 +431,10 @@ private enum FoundationModelsRuntimeTranslator {
         """
         You are a translation engine.
         Translate from \(input.sourceLanguage) to \(input.targetLanguage).
+        Translate every sentence in the source text; do not omit any part.
+        Keep the same number of sentences as the source text.
+        Treat the source as HTML-like text.
+        STRICT REQUIREMENT: Preserve all `</br>` tokens exactly as in source (same count and order). Do not replace, remove, or add `</br>`.
         Preserve meaning and punctuation structure whenever possible.
         Do not include explanations, notes, or commentary.
         """
@@ -407,8 +454,12 @@ private enum FoundationModelsRuntimeTranslator {
 
     private static func promptForSegment(_ segment: TextSegment, input: TranslationInput) -> String {
         var lines: [String] = []
-        lines.append("Source text:")
-        lines.append(segment.text)
+        lines.append("Target language code: \(input.targetLanguage)")
+        lines.append("The source is HTML-like text.")
+        lines.append("STYLE REQUIREMENT: Preserve all `</br>` tokens exactly as in source (same count and order).")
+        lines.append("Translate every sentence in the source text; do not omit any part.")
+        lines.append("Keep the same number of sentences as the source text.")
+        lines.append("Important: translation must be translated source text only.")
 
         if !input.glossaryMatches.isEmpty {
             let glossaryLines = input.glossaryMatches
@@ -427,10 +478,8 @@ private enum FoundationModelsRuntimeTranslator {
         }
 
         lines.append("")
-        lines.append("Target language code: \(input.targetLanguage)")
-        lines.append("Segment kind: \(segment.kind.rawValue)")
-        lines.append("Translate faithfully for this segment kind.")
-        lines.append("Important: translation must be translated source text, never the kind label itself.")
+        lines.append("Source text:")
+        lines.append(sourceTextForPrompt(segment.text))
         return lines.joined(separator: "\n")
     }
 
@@ -439,9 +488,6 @@ private enum FoundationModelsRuntimeTranslator {
         lines.append("Task: direct translation only.")
         lines.append("Source language: \(input.sourceLanguage)")
         lines.append("Target language: \(input.targetLanguage)")
-        lines.append("")
-        lines.append("Source text:")
-        lines.append(segment.text)
 
         if !input.protectedTokens.isEmpty {
             let protectedList = input.protectedTokens
@@ -452,27 +498,35 @@ private enum FoundationModelsRuntimeTranslator {
         }
 
         lines.append("")
-        lines.append("Segment kind: \(segment.kind.rawValue)")
-        lines.append("Translate faithfully for this segment kind.")
-        lines.append("Important: translation must be translated source text, never the kind label itself.")
+        lines.append("The source is HTML-like text.")
+        lines.append("STRICT REQUIREMENT: Preserve all `</br>` tokens exactly as in source (same count and order). Do not replace, remove, or add `</br>`.")
+        lines.append("Translate every sentence in the source text; do not omit any part.")
+        lines.append("Keep the same number of sentences as the source text.")
+        lines.append("Important: translation must be translated source text only.")
+        lines.append("")
+        lines.append("Source text:")
+        lines.append(sourceTextForPrompt(segment.text))
         return lines.joined(separator: "\n")
     }
 
     private static func strictPromptForSegment(
         sourceText: String,
-        expectedTargetLanguage: String,
-        expectedKind: SegmentKind
+        expectedTargetLanguage: String
     ) -> String {
         """
         Translate this text strictly.
         Rules:
         - target language: \(expectedTargetLanguage)
-        - segment kind: \(expectedKind.rawValue)
+        - source is HTML-like text
+        - STRICT REQUIREMENT: preserve all `</br>` tokens exactly as in source (same count and order)
+        - do not replace, remove, or add `</br>`
+        - translate every sentence in the source text; do not omit any part
+        - keep the same number of sentences as the source text; do not merge, split, summarize, or drop sentences
         - output translation only, no notes or placeholders
         - translation must not be the kind label (for example: heading, general, dialogue, ui-labels, lists, codes_or_path)
 
         Source text:
-        \(sourceText)
+        \(sourceTextForPrompt(sourceText))
         """
     }
 
@@ -480,7 +534,7 @@ private enum FoundationModelsRuntimeTranslator {
         safePrompt: String,
         sourceText: String,
         expectedTargetLanguage: String,
-        expectedKind: SegmentKind,
+        preprocessKind: SegmentKind,
         session: LanguageModelSession,
         segmentIndex: Int,
         onPartialResult: (@Sendable (_ segmentIndex: Int, _ partialTranslation: String) -> Void)?,
@@ -491,7 +545,7 @@ private enum FoundationModelsRuntimeTranslator {
                 prompt: safePrompt,
                 sourceText: sourceText,
                 expectedTargetLanguage: expectedTargetLanguage,
-                expectedKind: expectedKind,
+                preprocessKind: preprocessKind,
                 using: session,
                 segmentIndex: segmentIndex,
                 onPartialResult: onPartialResult,
@@ -499,19 +553,21 @@ private enum FoundationModelsRuntimeTranslator {
             )
         } catch {
             onDiagnosticEvent?(
-                "segment=\(segmentIndex), kind=\(expectedKind.rawValue): fallback-failed-source-returned (\(error.localizedDescription))"
+                "segment=\(segmentIndex), preprocess-kind=\(preprocessKind.rawValue): fallback-failed-source-returned (\(error.localizedDescription))"
             )
             return StructuredTranslationResult(
-                translation: sourceText.trimmingCharacters(in: .whitespacesAndNewlines),
-                kind: nil
+                translation: sourceFallbackTranslation(
+                    sourceText: sourceText,
+                    error: error
+                ),
+                outputBreakTagCount: 0
             )
         }
     }
 
     private static func validateStructuredTranslation(
         payload: StructuredTranslationPayload,
-        expectedTargetLanguage: String,
-        expectedKind: SegmentKind
+        expectedTargetLanguage: String
     ) throws -> StructuredTranslationResult {
         let actualCode = normalizedLanguageCode(payload.targetLanguage)
         let expectedCode = normalizedLanguageCode(expectedTargetLanguage)
@@ -521,32 +577,94 @@ private enum FoundationModelsRuntimeTranslator {
                 actual: actualCode
             )
         }
-        guard let parsedKind = parseSegmentKind(payload.kind) else {
-            throw FoundationModelsStructuredOutputError.invalidFormat(
-                content: "kind=\(payload.kind)"
-            )
-        }
-        guard parsedKind == expectedKind else {
-            throw FoundationModelsStructuredOutputError.kindMismatch(
-                expected: expectedKind.rawValue,
-                actual: parsedKind.rawValue
-            )
-        }
-
         let trimmed = payload.translation.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw FoundationModelsStructuredOutputError.emptyTranslation
         }
-        guard !isKindLabelTranslation(trimmed) else {
-            throw FoundationModelsStructuredOutputError.kindLabelTranslation(value: trimmed)
+        let sanitized = sanitizeStructuredLeakage(in: trimmed)
+        guard !isPlaceholderTranslation(sanitized) else {
+            throw FoundationModelsStructuredOutputError.placeholderTranslation(value: sanitized)
         }
-        guard !isPlaceholderTranslation(trimmed) else {
-            throw FoundationModelsStructuredOutputError.placeholderTranslation(value: trimmed)
-        }
+        let outputBreakTagCount = lineBreakTagCount(in: sanitized)
+        let normalizedTranslation = normalizeBreakTagsToNewline(in: sanitized)
         return StructuredTranslationResult(
-            translation: trimmed,
-            kind: parsedKind
+            translation: normalizedTranslation,
+            outputBreakTagCount: outputBreakTagCount
         )
+    }
+
+    private static func sourceTextForPrompt(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\n", with: lineBreakMarker)
+    }
+
+    private static func sentenceCountByNLTokenizer(_ text: String) -> Int {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return 0 }
+
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = normalized
+
+        var count = 0
+        tokenizer.enumerateTokens(in: normalized.startIndex..<normalized.endIndex) { _, _ in
+            count += 1
+            return true
+        }
+        return max(1, count)
+    }
+
+    private static func shouldRetryForSentenceDrop(
+        inputSentenceCount: Int,
+        outputSentenceCount: Int
+    ) -> Bool {
+        guard inputSentenceCount > 0 else { return false }
+        if inputSentenceCount == 2 && outputSentenceCount == 1 {
+            return false
+        }
+        return outputSentenceCount * 2 < inputSentenceCount
+    }
+
+    private static func normalizeBreakTagsToNewline(in text: String) -> String {
+        var normalized = text
+        normalized = replaceRegex(
+            pattern: #"(?i)</\s*p\s*>\s*<\s*p(?:\s+[^>]*)?\s*>"#,
+            in: normalized,
+            with: "\n"
+        )
+        normalized = replaceRegex(
+            pattern: #"(?i)</\s*p\s*>"#,
+            in: normalized,
+            with: "\n"
+        )
+        normalized = replaceRegex(
+            pattern: #"(?i)<\s*p(?:\s+[^>]*)?\s*>"#,
+            in: normalized,
+            with: ""
+        )
+        normalized = replaceRegex(
+            pattern: #"(?i)<\s*/?\s*br(?:\s*/)?\s*>"#,
+            in: normalized,
+            with: "\n"
+        )
+        return normalized
+    }
+
+    private static func lineBreakTagCount(in text: String) -> Int {
+        guard !text.isEmpty else { return 0 }
+        let pattern = #"(?i)(<\s*/?\s*br(?:\s*/)?\s*>|</\s*p\s*>\s*<\s*p(?:\s+[^>]*)?\s*>|</\s*p\s*>)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return 0
+        }
+        let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.numberOfMatches(in: text, range: fullRange)
+    }
+
+    private static func replaceRegex(pattern: String, in text: String, with replacement: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+        let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.stringByReplacingMatches(in: text, range: fullRange, withTemplate: replacement)
     }
 
     private static func isPlaceholderTranslation(_ text: String) -> Bool {
@@ -564,9 +682,19 @@ private enum FoundationModelsRuntimeTranslator {
         return placeholders.contains(normalized)
     }
 
-    private static func isKindLabelTranslation(_ text: String) -> Bool {
-        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return SegmentKind.allCases.map(\.rawValue).contains(normalized)
+    private static func sanitizeStructuredLeakage(in text: String) -> String {
+        // Guard against occasional structured-output collapse where extra JSON/meta text
+        // leaks into `translation` (for example: ..."}Author2024-...).
+        let leakagePattern = #"(?:\"|”)?\}\s*[\p{L}\p{N}]"#
+        guard let leakageRange = text.range(of: leakagePattern, options: .regularExpression) else {
+            return text
+        }
+
+        let head = String(text[..<leakageRange.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"”"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return head
     }
 
     private static func normalizedLanguageCode(_ raw: String) -> String {
@@ -575,24 +703,6 @@ private enum FoundationModelsRuntimeTranslator {
             .split(separator: "-")
             .first
             .map(String.init) ?? raw.lowercased()
-    }
-
-    private static func parseSegmentKind(_ raw: String) -> SegmentKind? {
-        let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if let exact = SegmentKind(rawValue: normalized) {
-            return exact
-        }
-
-        switch normalized {
-        case "ui_labels", "ui-label", "ui_label":
-            return .uiLabels
-        case "list", "list-item", "list_item":
-            return .lists
-        case "code_or_path", "code-path", "code_or_paths", "codes_or_paths":
-            return .codesOrPath
-        default:
-            return nil
-        }
     }
 
     private static func shouldRetryOrFallbackForGeneration(_ error: Error) -> Bool {
@@ -614,15 +724,102 @@ private enum FoundationModelsRuntimeTranslator {
             || localized.contains("content")
             || localized.contains("policy")
     }
+
+    private static func isUnsafeContentError(_ error: Error) -> Bool {
+        var queue: [NSError] = [error as NSError]
+        var visited = Set<String>()
+
+        while let current = queue.popLast() {
+            let key = "\(current.domain)#\(current.code)#\(current.localizedDescription)"
+            if visited.contains(key) {
+                continue
+            }
+            visited.insert(key)
+
+            if isUnsafeSignal(current) {
+                return true
+            }
+
+            if let underlying = current.userInfo[NSUnderlyingErrorKey] as? NSError {
+                queue.append(underlying)
+            }
+            if let detailed = current.userInfo["NSDetailedErrors"] as? [NSError] {
+                queue.append(contentsOf: detailed)
+            }
+            if let multiple = current.userInfo["NSMultipleUnderlyingErrorsKey"] as? [NSError] {
+                queue.append(contentsOf: multiple)
+            }
+        }
+
+        return false
+    }
+
+    private static func isUnsafeSignal(_ error: NSError) -> Bool {
+        let domain = error.domain.lowercased()
+        let description = error.localizedDescription.lowercased()
+        let failureReason = (error.userInfo[NSLocalizedFailureReasonErrorKey] as? String ?? "")
+            .lowercased()
+        let recoverySuggestion = (error.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String ?? "")
+            .lowercased()
+        let combined = [description, failureReason, recoverySuggestion].joined(separator: " ")
+
+        // Foundation Models generation errors may surface as numeric codes with little text.
+        if domain.contains("languagemodelsession.generationerror"), error.code == 2 {
+            return true
+        }
+
+        return combined.contains("unsafe")
+            || combined.contains("safety")
+            || combined.contains("policy")
+            || combined.contains("content filter")
+            || combined.contains("prohibited")
+            || combined.contains("restricted")
+            || combined.contains("disallowed")
+            || combined.contains("moderation")
+    }
+
+    private static func sourceFallbackTranslation(sourceText: String, error: Error) -> String {
+        let trimmed = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+        if isUnsafeContentError(error) {
+            return "⛔" + trimmed
+        }
+        return trimmed
+    }
+
+    private static func isContextWindowExceededError(_ error: Error) -> Bool {
+        let localized = error.localizedDescription.lowercased()
+        return localized.contains("context window")
+            || localized.contains("exceeded model context window size")
+    }
+
+    private static func sanitizedForLog(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let compact = text.replacingOccurrences(of: "\n", with: "\\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !compact.isEmpty else { return nil }
+
+        let limit = 1_500
+        guard compact.count > limit else { return compact }
+
+        let headCount = 1_000
+        let tailCount = 350
+        let omitted = compact.count - headCount - tailCount
+        let head = compact.prefix(headCount)
+        let tail = compact.suffix(tailCount)
+        return "\(head)...(truncated \(omitted) chars)...\(tail)"
+    }
+
+    private static var verboseLoggingEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "developerVerboseModeEnabled")
+    }
 }
 
 @available(macOS 26.0, iOS 26.0, *)
 private enum FoundationModelsStructuredOutputError: LocalizedError {
     case invalidFormat(content: String)
     case targetLanguageMismatch(expected: String, actual: String)
-    case kindMismatch(expected: String, actual: String)
     case emptyTranslation
-    case kindLabelTranslation(value: String)
     case placeholderTranslation(value: String)
 
     var isRetryable: Bool {
@@ -631,11 +828,7 @@ private enum FoundationModelsStructuredOutputError: LocalizedError {
             return true
         case .targetLanguageMismatch:
             return true
-        case .kindMismatch:
-            return true
         case .emptyTranslation:
-            return true
-        case .kindLabelTranslation:
             return true
         case .placeholderTranslation:
             return true
@@ -648,12 +841,8 @@ private enum FoundationModelsStructuredOutputError: LocalizedError {
             return "Model output was not valid structured translation content."
         case .targetLanguageMismatch(let expected, let actual):
             return "Structured output target mismatch. expected=\(expected), actual=\(actual)"
-        case .kindMismatch(let expected, let actual):
-            return "Structured output kind mismatch. expected=\(expected), actual=\(actual)"
         case .emptyTranslation:
             return "Structured output translation was empty."
-        case .kindLabelTranslation(let value):
-            return "Structured output translation was a kind label (\(value))."
         case .placeholderTranslation(let value):
             return "Structured output translation was placeholder text (\(value))."
         }

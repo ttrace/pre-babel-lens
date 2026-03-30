@@ -166,192 +166,111 @@ enum SentenceSegmenter {
         guard !trimmed.isEmpty else {
             return SegmentationResult(segments: [], joinersAfter: [])
         }
+        let units = sentenceUnits(from: trimmed)
+        return groupedSegments(
+            from: units,
+            maxCharacters: 250,
+            maxWords: 100
+        )
+    }
+
+    private static func sentenceUnits(from text: String) -> [SentenceUnit] {
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = text
+
+        var ranges: [Range<String.Index>] = []
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+            ranges.append(range)
+            return true
+        }
+
+        if ranges.isEmpty {
+            return [SentenceUnit(text: text, joinerAfter: "")]
+        }
+
+        var units: [SentenceUnit] = []
+        units.reserveCapacity(ranges.count)
+
+        for idx in ranges.indices {
+            let range = ranges[idx]
+            let nextStart = idx + 1 < ranges.count ? ranges[idx + 1].lowerBound : text.endIndex
+            let joinerAfter = String(text[range.upperBound..<nextStart])
+            let sentenceText: String
+            if idx == 0 {
+                let leading = String(text[text.startIndex..<range.lowerBound])
+                sentenceText = leading + String(text[range])
+            } else {
+                sentenceText = String(text[range])
+            }
+            units.append(SentenceUnit(text: sentenceText, joinerAfter: joinerAfter))
+        }
+
+        return units
+    }
+
+    private static func groupedSegments(
+        from units: [SentenceUnit],
+        maxCharacters: Int,
+        maxWords: Int
+    ) -> SegmentationResult {
+        guard !units.isEmpty else {
+            return SegmentationResult(segments: [], joinersAfter: [])
+        }
 
         var segments: [TextSegment] = []
         var joinersAfter: [String] = []
+        var start = 0
 
-        let blocks = splitByBlankLines(in: trimmed)
-        for block in blocks {
-            let blockSegments = segmentBlock(block.text)
-            guard !blockSegments.isEmpty else {
-                if !joinersAfter.isEmpty {
-                    joinersAfter[joinersAfter.count - 1] += block.delimiterAfter
+        while start < units.count {
+            var end = start
+
+            while end < units.count {
+                let candidate = composeSegmentText(units: units, start: start, end: end)
+                let candidateChars = candidate.count
+                let candidateWords = wordCount(in: candidate)
+                let exceeds = candidateChars > maxCharacters || candidateWords > maxWords
+
+                if exceeds && end > start {
+                    break
                 }
-                continue
+
+                end += 1
+
+                if exceeds {
+                    break
+                }
             }
 
-            for (indexInBlock, blockSegment) in blockSegments.enumerated() {
-                segments.append(
-                    TextSegment(
-                        index: segments.count,
-                        text: blockSegment.text,
-                        kind: blockSegment.kind
-                    )
+            let safeEnd = max(start + 1, end)
+            let segmentText = composeSegmentText(units: units, start: start, end: safeEnd - 1)
+            let joinerAfter = units[safeEnd - 1].joinerAfter
+            segments.append(
+                TextSegment(
+                    index: segments.count,
+                    text: segmentText,
+                    kind: .general
                 )
-                let intraBlockJoiner = indexInBlock < blockSegments.count - 1 ? "\n" : ""
-                joinersAfter.append(intraBlockJoiner)
-            }
-
-            joinersAfter[joinersAfter.count - 1] += block.delimiterAfter
-        }
-
-        if segments.isEmpty {
-            return SegmentationResult(
-                segments: [TextSegment(index: 0, text: trimmed)],
-                joinersAfter: [""]
             )
-        }
-
-        if joinersAfter.count < segments.count {
-            joinersAfter.append(contentsOf: Array(repeating: "", count: segments.count - joinersAfter.count))
+            joinersAfter.append(joinerAfter)
+            start = safeEnd
         }
 
         return SegmentationResult(segments: segments, joinersAfter: joinersAfter)
     }
 
-    private static func segmentBlock(_ blockText: String) -> [KindedSegment] {
-        let lines = blockText.components(separatedBy: "\n")
-        guard !lines.isEmpty else { return [] }
-
-        var segments: [KindedSegment] = []
-        var cursor = 0
-
-        while cursor < lines.count {
-            let current = lines[cursor]
-            if isDialogueLine(current) {
-                let end = runEnd(from: cursor, in: lines, where: isDialogueLine)
-                let safeEnd = max(cursor + 1, min(end, lines.count))
-                append(lines: lines, start: cursor, end: safeEnd, kind: .dialogue, to: &segments)
-                cursor = safeEnd
-                continue
-            }
-
-            let uiLabelsEnd = runEnd(from: cursor, in: lines, where: isTwoWordsOrFewerLine)
-            if uiLabelsEnd - cursor >= 2 {
-                let safeEnd = min(uiLabelsEnd, lines.count)
-                append(lines: lines, start: cursor, end: safeEnd, kind: .uiLabels, to: &segments)
-                cursor = safeEnd
-                continue
-            }
-
-            let shortNonPeriodEnd = runEnd(from: cursor, in: lines, where: isShortNonPeriodLine)
-            if shortNonPeriodEnd > cursor {
-                let safeEnd = min(shortNonPeriodEnd, lines.count)
-                let range = cursor..<safeEnd
-                let kind: SegmentKind = range.count == 1 ? .heading : .lists
-                append(lines: lines, start: range.lowerBound, end: range.upperBound, kind: kind, to: &segments)
-                cursor = safeEnd
-                continue
-            }
-
-            var generalEnd = cursor + 1
-            while generalEnd < lines.count {
-                if isDialogueLine(lines[generalEnd]) {
-                    break
-                }
-                let nextUILabelsEnd = runEnd(from: generalEnd, in: lines, where: isTwoWordsOrFewerLine)
-                if nextUILabelsEnd - generalEnd >= 2 {
-                    break
-                }
-                if isShortNonPeriodLine(lines[generalEnd]) {
-                    break
-                }
-                generalEnd += 1
-            }
-
-            let safeEnd = max(cursor + 1, min(generalEnd, lines.count))
-            append(lines: lines, start: cursor, end: safeEnd, kind: .general, to: &segments)
-            cursor = safeEnd
-        }
-
-        return segments
-    }
-
-    private static func append(
-        lines: [String],
+    private static func composeSegmentText(
+        units: [SentenceUnit],
         start: Int,
-        end: Int,
-        kind: SegmentKind,
-        to segments: inout [KindedSegment]
-    ) {
-        guard !lines.isEmpty else { return }
-        let safeStart = max(0, min(start, lines.count))
-        let safeEnd = max(safeStart, min(end, lines.count))
-        guard safeStart < safeEnd else { return }
-        let range = safeStart..<safeEnd
-        let text = lines[range].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        segments.append(KindedSegment(text: text, kind: kind))
-    }
-
-    private static func runEnd(
-        from start: Int,
-        in lines: [String],
-        where predicate: (String) -> Bool
-    ) -> Int {
-        var index = start
-        while index < lines.count, predicate(lines[index]) {
-            index += 1
-        }
-        return index
-    }
-
-    private static func splitByBlankLines(in text: String) -> [BlankLineBlock] {
-        let regex = try! NSRegularExpression(pattern: #"\n[ \t]*\n+"#)
-        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
-        let matches = regex.matches(in: text, range: nsRange)
-
-        if matches.isEmpty {
-            return [BlankLineBlock(text: text, delimiterAfter: "")]
-        }
-
-        var blocks: [BlankLineBlock] = []
-        var cursor = text.startIndex
-
-        for match in matches {
-            guard let range = Range(match.range, in: text) else { continue }
-            let chunk = String(text[cursor..<range.lowerBound])
-            let delimiter = String(text[range])
-
-            if !chunk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                blocks.append(BlankLineBlock(text: chunk, delimiterAfter: delimiter))
-            } else if !blocks.isEmpty {
-                blocks[blocks.count - 1].delimiterAfter += delimiter
+        end: Int
+    ) -> String {
+        var result = ""
+        for index in start...end {
+            result += units[index].text
+            if index < end {
+                result += units[index].joinerAfter
             }
-            cursor = range.upperBound
         }
-
-        let tail = String(text[cursor..<text.endIndex])
-        if !tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            blocks.append(BlankLineBlock(text: tail, delimiterAfter: ""))
-        } else if !blocks.isEmpty {
-            blocks[blocks.count - 1].delimiterAfter += tail
-        }
-
-        return blocks
-    }
-
-    private static func isDialogueLine(_ line: String) -> Bool {
-        let nsRange = NSRange(line.startIndex..<line.endIndex, in: line)
-        return dialogueLineRegex.firstMatch(in: line, range: nsRange) != nil
-    }
-
-    private static func isTwoWordsOrFewerLine(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return wordCount(in: trimmed) <= 2
-    }
-
-    private static func isShortNonPeriodLine(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        guard !endsWithPeriod(trimmed) else { return false }
-        return wordCount(in: trimmed) <= 15
-    }
-
-    private static func endsWithPeriod(_ line: String) -> Bool {
-        guard let last = line.last else { return false }
-        return last == "." || last == "。"
+        return result
     }
 
     private static func wordCount(in line: String) -> Int {
@@ -359,20 +278,11 @@ enum SentenceSegmenter {
             .split(whereSeparator: \.isWhitespace)
             .count
     }
-
-    private static let dialogueLineRegex = try! NSRegularExpression(
-        pattern: #"^\s*(?:(?:[-—•*]\s+\S)|(?:[「『“"']\S)|(?:[A-Za-z][A-Za-z0-9 _-]{0,20}:\s))"#
-    )
 }
 
-private struct KindedSegment {
+private struct SentenceUnit {
     var text: String
-    var kind: SegmentKind
-}
-
-private struct BlankLineBlock {
-    var text: String
-    var delimiterAfter: String
+    var joinerAfter: String
 }
 
 struct SegmentationResult {
