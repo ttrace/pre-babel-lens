@@ -126,6 +126,22 @@ struct DeterministicPreprocessEngineTests {
     }
 
     @Test
+    func firstSegmentIsMarkedLeadingForFutureSpecialHandling() {
+        let request = TranslationRequest(
+            sourceLanguage: "en",
+            targetLanguage: "ja",
+            text: "First sentence. Second sentence. Third sentence.",
+            glossary: [],
+            experimentMode: .segmented
+        )
+
+        let result = DeterministicPreprocessEngine().analyze(request)
+
+        #expect(result.input.segments.first?.role == .leading)
+        #expect(result.input.segments.dropFirst().allSatisfy { $0.role == .regular })
+    }
+
+    @Test
     func sentenceSegmentationRoundTripsUnsafeSampleWithoutLosingParagraphBreaks() {
         let request = TranslationRequest(
             sourceLanguage: "en",

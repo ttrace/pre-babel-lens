@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="PreBabelLens"
 BUNDLE_ID="com.ttrace.prebabellens"
-VERSION="${VERSION:-0.4.0}"
+VERSION="${VERSION:-0.6.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 APPLE_ID="${APPLE_ID:-}"
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"
@@ -19,9 +19,11 @@ BUNDLE_DIR="${ARTIFACTS_DIR}/${APP_NAME}.app"
 MACOS_DIR="${BUNDLE_DIR}/Contents/MacOS"
 RESOURCES_DIR="${BUNDLE_DIR}/Contents/Resources"
 ZIP_PATH="${ARTIFACTS_DIR}/${APP_NAME}-v${VERSION}.zip"
+DMG_STAGING_DIR="${ARTIFACTS_DIR}/${APP_NAME}-dmg"
+DMG_PATH="${ARTIFACTS_DIR}/${APP_NAME}-v${VERSION}.dmg"
 
 mkdir -p "${ARTIFACTS_DIR}"
-rm -rf "${BUNDLE_DIR}" "${ZIP_PATH}"
+rm -rf "${BUNDLE_DIR}" "${ZIP_PATH}" "${DMG_STAGING_DIR}" "${DMG_PATH}"
 
 if [[ -d "${XCODE_DEVELOPER_DIR}" ]]; then
   echo "Building release with Xcode toolchain..."
@@ -112,11 +114,43 @@ codesign --verify --deep --strict --verbose=2 "${BUNDLE_DIR}"
 echo "Creating upload zip..."
 ditto -c -k --sequesterRsrc --keepParent "${BUNDLE_DIR}" "${ZIP_PATH}"
 
+echo "Preparing DMG contents..."
+mkdir -p "${DMG_STAGING_DIR}"
+cp -R "${BUNDLE_DIR}" "${DMG_STAGING_DIR}/${APP_NAME}.app"
+
+if command -v osascript >/dev/null 2>&1; then
+  if ! osascript \
+    -e 'tell application "Finder"' \
+    -e 'set targetFolder to POSIX file "/Applications"' \
+    -e 'set destinationFolder to POSIX file "'"${DMG_STAGING_DIR}"'"' \
+    -e 'if not (exists alias file "Applications" of folder destinationFolder) then make new alias file at folder destinationFolder to targetFolder with properties {name:"Applications"}' \
+    -e 'end tell'
+  then
+    ln -s /Applications "${DMG_STAGING_DIR}/Applications"
+  fi
+else
+  ln -s /Applications "${DMG_STAGING_DIR}/Applications"
+fi
+
+echo "Creating DMG..."
+hdiutil create \
+  -volname "Pre-Babel Lens" \
+  -srcfolder "${DMG_STAGING_DIR}" \
+  -ov \
+  -format UDZO \
+  "${DMG_PATH}"
+
 echo "Submitting to notarization..."
 if [[ -n "${NOTARY_PROFILE}" ]]; then
   xcrun notarytool submit "${ZIP_PATH}" --keychain-profile "${NOTARY_PROFILE}" --wait
+  xcrun notarytool submit "${DMG_PATH}" --keychain-profile "${NOTARY_PROFILE}" --wait
 elif [[ -n "${APPLE_ID}" && -n "${APPLE_TEAM_ID}" && -n "${APPLE_APP_SPECIFIC_PASSWORD}" ]]; then
   xcrun notarytool submit "${ZIP_PATH}" \
+    --apple-id "${APPLE_ID}" \
+    --team-id "${APPLE_TEAM_ID}" \
+    --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
+    --wait
+  xcrun notarytool submit "${DMG_PATH}" \
     --apple-id "${APPLE_ID}" \
     --team-id "${APPLE_TEAM_ID}" \
     --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
@@ -130,7 +164,10 @@ fi
 echo "Stapling notarization ticket..."
 xcrun stapler staple "${BUNDLE_DIR}"
 xcrun stapler validate "${BUNDLE_DIR}"
+xcrun stapler staple "${DMG_PATH}"
+xcrun stapler validate "${DMG_PATH}"
 
 echo "Release artifact ready:"
 echo "  App: ${BUNDLE_DIR}"
 echo "  Zip: ${ZIP_PATH}"
+echo "  DMG: ${DMG_PATH}"

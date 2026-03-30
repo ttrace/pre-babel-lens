@@ -78,17 +78,30 @@ enum SegmentKind: String, CaseIterable, Codable, Hashable, Sendable {
     case codesOrPath = "codes_or_path"
 }
 
+enum SegmentRole: String, CaseIterable, Codable, Hashable, Sendable {
+    case leading
+    case regular
+}
+
 struct TextSegment: Hashable, Equatable, Identifiable {
     let id: UUID
     var index: Int
     var text: String
     var kind: SegmentKind
+    var role: SegmentRole
 
-    init(id: UUID = UUID(), index: Int, text: String, kind: SegmentKind = .general) {
+    init(
+        id: UUID = UUID(),
+        index: Int,
+        text: String,
+        kind: SegmentKind = .general,
+        role: SegmentRole? = nil
+    ) {
         self.id = id
         self.index = index
         self.text = text
         self.kind = kind
+        self.role = role ?? (index == 0 ? .leading : .regular)
     }
 }
 

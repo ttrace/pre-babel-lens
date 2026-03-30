@@ -154,7 +154,7 @@ enum RawInputSegmenter {
             return SegmentationResult(segments: [], joinersAfter: [])
         }
         return SegmentationResult(
-            segments: [TextSegment(index: 0, text: text)],
+            segments: [TextSegment(index: 0, text: text, role: .leading)],
             joinersAfter: [""]
         )
     }
@@ -248,7 +248,8 @@ enum SentenceSegmenter {
                 TextSegment(
                     index: segments.count,
                     text: segmentText,
-                    kind: .general
+                    kind: .general,
+                    role: segments.isEmpty ? .leading : .regular
                 )
             )
             joinersAfter.append(joinerAfter)
