@@ -81,6 +81,7 @@ struct TranslationOrchestrator: Sendable {
 
         return TranslationOutput(
             translatedText: translatedText,
+            containsUnsafeFallback: segmentOutputs.contains(where: \.isUnsafeFallback),
             segmentOutputs: segmentOutputs,
             analysis: TranslationAnalysis(
                 request: request,

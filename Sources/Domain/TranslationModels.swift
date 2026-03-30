@@ -64,6 +64,7 @@ struct TranslationInput: Equatable {
 
 struct TranslationOutput: Equatable {
     var translatedText: String
+    var containsUnsafeFallback: Bool
     var segmentOutputs: [SegmentOutput]
     var analysis: TranslationAnalysis
 }
@@ -96,12 +97,20 @@ struct SegmentOutput: Hashable, Equatable, Identifiable {
     var segmentIndex: Int
     var sourceText: String
     var translatedText: String
+    var isUnsafeFallback: Bool
 
-    init(id: UUID = UUID(), segmentIndex: Int, sourceText: String, translatedText: String) {
+    init(
+        id: UUID = UUID(),
+        segmentIndex: Int,
+        sourceText: String,
+        translatedText: String,
+        isUnsafeFallback: Bool = false
+    ) {
         self.id = id
         self.segmentIndex = segmentIndex
         self.sourceText = sourceText
         self.translatedText = translatedText
+        self.isUnsafeFallback = isUnsafeFallback
     }
 }
 

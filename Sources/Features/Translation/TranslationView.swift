@@ -363,7 +363,7 @@ struct TranslationView: View {
                             Color.clear
                                 .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
                         } else {
-                            Text(viewModel.translatedText)
+                            Text(styledOutputText)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -417,6 +417,38 @@ struct TranslationView: View {
             in: RoundedRectangle(cornerRadius: cardCornerRadius)
         )
         #endif
+    }
+
+    private var styledOutputText: AttributedString {
+        guard !viewModel.segmentOutputs.isEmpty else {
+            return AttributedString(viewModel.translatedText)
+        }
+
+        var result = AttributedString()
+        for (index, segment) in viewModel.segmentOutputs.enumerated() {
+            var chunk = AttributedString(segment.translatedText + joinerAfterOutputSegment(at: index))
+            if segment.isUnsafeFallback {
+                chunk.backgroundColor = unsafeSegmentBackgroundColor
+                chunk.foregroundColor = unsafeSegmentForegroundColor
+            }
+            result.append(chunk)
+        }
+        return result
+    }
+
+    private var unsafeSegmentBackgroundColor: Color {
+        Color.orange.opacity(colorScheme == .dark ? 0.65 : 0.38)
+    }
+
+    private var unsafeSegmentForegroundColor: Color {
+        colorScheme == .dark
+            ? Color.black.opacity(0.82)
+            : Color.black.opacity(0.72)
+    }
+
+    private func joinerAfterOutputSegment(at index: Int) -> String {
+        guard index < viewModel.segmentJoinersAfter.count else { return "" }
+        return viewModel.segmentJoinersAfter[index]
     }
     // #endregion
 

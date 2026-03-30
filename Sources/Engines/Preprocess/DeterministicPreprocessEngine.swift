@@ -154,7 +154,7 @@ enum RawInputSegmenter {
             return SegmentationResult(segments: [], joinersAfter: [])
         }
         return SegmentationResult(
-            segments: [TextSegment(index: 0, text: trimmed)],
+            segments: [TextSegment(index: 0, text: text)],
             joinersAfter: [""]
         )
     }
@@ -166,7 +166,7 @@ enum SentenceSegmenter {
         guard !trimmed.isEmpty else {
             return SegmentationResult(segments: [], joinersAfter: [])
         }
-        let units = sentenceUnits(from: trimmed)
+        let units = sentenceUnits(from: text)
         return groupedSegments(
             from: units,
             maxCharacters: 250,

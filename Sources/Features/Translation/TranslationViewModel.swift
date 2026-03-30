@@ -16,6 +16,8 @@ final class TranslationViewModel: ObservableObject {
     @Published var glossaryText: String = ""
 
     @Published var translatedText: String = ""
+    @Published var segmentOutputs: [SegmentOutput] = []
+    @Published var segmentJoinersAfter: [String] = []
     @Published var traces: [PreprocessTrace] = []
     @Published var protectedTokens: [ProtectedToken] = []
     @Published var glossaryMatches: [GlossaryMatch] = []
@@ -166,6 +168,8 @@ final class TranslationViewModel: ObservableObject {
 
         guard !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             translatedText = ""
+            segmentOutputs = []
+            segmentJoinersAfter = []
             traces = []
             protectedTokens = []
             glossaryMatches = []
@@ -189,6 +193,8 @@ final class TranslationViewModel: ObservableObject {
         pendingTranslationRequestStartedAt = nil
 
         translatedText = ""
+        segmentOutputs = []
+        segmentJoinersAfter = []
         traces = []
         protectedTokens = []
         glossaryMatches = []
@@ -241,6 +247,8 @@ final class TranslationViewModel: ObservableObject {
             )
             recordFirstOutputIfNeeded()
             translatedText = output.translatedText
+            segmentOutputs = output.segmentOutputs
+            segmentJoinersAfter = output.analysis.input.segmentJoinersAfter
             traces = output.analysis.traces
             protectedTokens = output.analysis.input.protectedTokens
             glossaryMatches = output.analysis.input.glossaryMatches

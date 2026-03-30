@@ -170,6 +170,7 @@ private enum FoundationModelsRuntimeTranslator {
                 try Task.checkCancellation()
                 let prompt = promptForSegment(segment, input: input)
                 var finalResult: StructuredTranslationResult
+                var isUnsafeFallback = false
                 var shouldSkipSentenceDropRetry = false
 
                 do {
@@ -187,16 +188,20 @@ private enum FoundationModelsRuntimeTranslator {
                     throw CancellationError()
                 } catch {
                     if isUnsafeContentError(error) {
+                        isUnsafeFallback = true
                         shouldSkipSentenceDropRetry = true
                         onDiagnosticEvent?(
                             "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): unsafe-no-retry-source-returned (\(error.localizedDescription))"
                         )
                         finalResult = StructuredTranslationResult(
                             translation: sourceFallbackTranslation(
-                                sourceText: segment.text,
-                                error: error
+                                sourceText: segment.text
                             ),
                             outputBreakTagCount: 0
+                        )
+                        session = LanguageModelSession(instructions: instructions(for: input))
+                        onDiagnosticEvent?(
+                            "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): session-reset-after-unsafe-fallback"
                         )
                     } else if isContextWindowExceededError(error) {
                         onDiagnosticEvent?(
@@ -220,17 +225,23 @@ private enum FoundationModelsRuntimeTranslator {
                         } catch is CancellationError {
                             throw CancellationError()
                         } catch {
-                            shouldSkipSentenceDropRetry = isUnsafeContentError(error)
+                            isUnsafeFallback = isUnsafeContentError(error)
+                            shouldSkipSentenceDropRetry = isUnsafeFallback
                             onDiagnosticEvent?(
                                 "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): retry-after-session-refresh-failed-source-returned (\(error.localizedDescription))"
                             )
                             finalResult = StructuredTranslationResult(
                                 translation: sourceFallbackTranslation(
-                                    sourceText: segment.text,
-                                    error: error
+                                    sourceText: segment.text
                                 ),
                                 outputBreakTagCount: 0
                             )
+                            if isUnsafeFallback {
+                                session = LanguageModelSession(instructions: instructions(for: input))
+                                onDiagnosticEvent?(
+                                    "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): session-reset-after-unsafe-fallback"
+                                )
+                            }
                         }
                     } else {
                         onDiagnosticEvent?(
@@ -238,12 +249,24 @@ private enum FoundationModelsRuntimeTranslator {
                         )
                         finalResult = StructuredTranslationResult(
                             translation: sourceFallbackTranslation(
-                                sourceText: segment.text,
-                                error: error
+                                sourceText: segment.text
                             ),
                             outputBreakTagCount: 0
                         )
                     }
+                }
+
+                if isUnsafeFallback {
+                    onPartialResult?(segment.index, finalResult.translation)
+                    outputs.append(
+                        SegmentOutput(
+                            segmentIndex: segment.index,
+                            sourceText: segment.text,
+                            translatedText: finalResult.translation,
+                            isUnsafeFallback: true
+                        )
+                    )
+                    continue
                 }
 
                 let inputSentenceCount = sentenceCountByNLTokenizer(segment.text)
@@ -290,7 +313,8 @@ private enum FoundationModelsRuntimeTranslator {
                     SegmentOutput(
                         segmentIndex: segment.index,
                         sourceText: segment.text,
-                        translatedText: finalResult.translation
+                        translatedText: finalResult.translation,
+                        isUnsafeFallback: isUnsafeFallback
                     )
                 )
             }
@@ -332,8 +356,7 @@ private enum FoundationModelsRuntimeTranslator {
             )
             return StructuredTranslationResult(
                 translation: sourceFallbackTranslation(
-                    sourceText: sourceText,
-                    error: error
+                    sourceText: sourceText
                 ),
                 outputBreakTagCount: 0
             )
@@ -557,8 +580,7 @@ private enum FoundationModelsRuntimeTranslator {
             )
             return StructuredTranslationResult(
                 translation: sourceFallbackTranslation(
-                    sourceText: sourceText,
-                    error: error
+                    sourceText: sourceText
                 ),
                 outputBreakTagCount: 0
             )
@@ -778,13 +800,8 @@ private enum FoundationModelsRuntimeTranslator {
             || combined.contains("moderation")
     }
 
-    private static func sourceFallbackTranslation(sourceText: String, error: Error) -> String {
-        let trimmed = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return trimmed }
-        if isUnsafeContentError(error) {
-            return "⛔" + trimmed
-        }
-        return trimmed
+    private static func sourceFallbackTranslation(sourceText: String) -> String {
+        sourceText
     }
 
     private static func isContextWindowExceededError(_ error: Error) -> Bool {

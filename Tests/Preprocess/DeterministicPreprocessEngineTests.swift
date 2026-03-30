@@ -126,6 +126,25 @@ struct DeterministicPreprocessEngineTests {
     }
 
     @Test
+    func sentenceSegmentationRoundTripsUnsafeSampleWithoutLosingParagraphBreaks() {
+        let request = TranslationRequest(
+            sourceLanguage: "en",
+            targetLanguage: "ja",
+            text: unsafeSampleText,
+            glossary: [],
+            experimentMode: .segmented
+        )
+
+        let result = DeterministicPreprocessEngine().analyze(request)
+        let reconstructed = reconstruct(
+            segments: result.input.segments,
+            joinersAfter: result.input.segmentJoinersAfter
+        )
+
+        #expect(reconstructed == unsafeSampleText)
+    }
+
+    @Test
     func languageDetectionForSenseiParagraphIsStableAcrossToolchains() {
         let text = """
         Taku-sensei, Namba-sensei, thank you for creating such an excellent opportunity.
@@ -158,4 +177,26 @@ struct DeterministicPreprocessEngineTests {
             #expect(result.input.isDetectedLanguageSupportedByAppleIntelligence == true)
         }
     }
+
+    private func reconstruct(segments: [TextSegment], joinersAfter: [String]) -> String {
+        guard !segments.isEmpty else { return "" }
+        return segments.enumerated().map { index, segment in
+            let joiner = index < joinersAfter.count ? joinersAfter[index] : ""
+            return segment.text + joiner
+        }
+        .joined()
+    }
 }
+
+private let unsafeSampleText = """
+Today I went to the hospital because of my condition... but the news was devastating 💔
+I never imagined I'd reach this point.
+
+The doctors told me that blood clots have started forming in my leg, and that the situation has become very serious, with complications that could lead to amputation, God forbid.
+
+They asked me to buy medication urgently to prevent my condition from worsening, but unfortunately, the treatment costs over $500, an amount I simply cannot afford.
+
+If I don't start treatment immediately, I might lose my leg... and maybe my whole life will change 😢. I also need urgent surgery to save me before it's too late.
+
+I returned to the tent devastated... I sat crying in front of my family, helpless to do anything.
+"""
