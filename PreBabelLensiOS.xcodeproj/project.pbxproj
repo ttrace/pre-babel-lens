@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		917E8CAB2F7B4E140077CE0A /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 917E8CAA2F7B4E140077CE0A /* AppIcon.icon */; };
+		917E8CAC2F7B4E140077CE0A /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 917E8CAA2F7B4E140077CE0A /* AppIcon.icon */; };
 		B00000000000000000000001 /* Sources/App/PreBabelLensApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000001 /* Sources/App/PreBabelLensApp.swift */; };
 		B00000000000000000000002 /* Sources/Domain/TranslationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000002 /* Sources/Domain/TranslationModels.swift */; };
 		B00000000000000000000003 /* Sources/Domain/TranslationProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000003 /* Sources/Domain/TranslationProtocols.swift */; };
@@ -27,7 +29,32 @@
 		B00000000000000000000018 /* PreBabelLensShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001B /* PreBabelLensShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		X00000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = R00000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = T00000000000000000000002;
+			remoteInfo = PreBabelLensShare;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		P00000000000000000000004 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B00000000000000000000018 /* PreBabelLensShare.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		917E8CAA2F7B4E140077CE0A /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		F00000000000000000000001 /* Sources/App/PreBabelLensApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/App/PreBabelLensApp.swift; sourceTree = SOURCE_ROOT; };
 		F00000000000000000000002 /* Sources/Domain/TranslationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/TranslationModels.swift; sourceTree = SOURCE_ROOT; };
 		F00000000000000000000003 /* Sources/Domain/TranslationProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/TranslationProtocols.swift; sourceTree = SOURCE_ROOT; };
@@ -73,30 +100,6 @@
 		};
 /* End PBXFrameworksBuildPhase section */
 
-/* Begin PBXCopyFilesBuildPhase section */
-		P00000000000000000000004 /* Embed App Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				B00000000000000000000018 /* PreBabelLensShare.appex in Embed App Extensions */,
-			);
-			name = "Embed App Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
-
-/* Begin PBXContainerItemProxy section */
-		X00000000000000000000001 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = R00000000000000000000001 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = T00000000000000000000002;
-			remoteInfo = PreBabelLensShare;
-		};
-/* End PBXContainerItemProxy section */
-
 /* Begin PBXGroup section */
 		G00000000000000000000001 = {
 			isa = PBXGroup;
@@ -136,6 +139,7 @@
 				F00000000000000000000015 /* iOSApp/Shared/SharedImportStore.swift */,
 				F00000000000000000000011 /* iOSApp/Base.lproj/Main.storyboard */,
 				F00000000000000000000013 /* iOSApp/Base.lproj/LaunchScreen.storyboard */,
+				917E8CAA2F7B4E140077CE0A /* AppIcon.icon */,
 				F00000000000000000000014 /* iOSApp/Settings.bundle */,
 				F00000000000000000000017 /* iOSShareExtension/Info.plist */,
 				F00000000000000000000018 /* iOSShareExtension/ShareViewController.swift */,
@@ -230,20 +234,13 @@
 		};
 /* End PBXProject section */
 
-/* Begin PBXTargetDependency section */
-		D00000000000000000000001 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = T00000000000000000000002 /* PreBabelLensShare */;
-			targetProxy = X00000000000000000000001 /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
-
 /* Begin PBXResourcesBuildPhase section */
 		P00000000000000000000002 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				B00000000000000000000013 /* iOSApp/Base.lproj/LaunchScreen.storyboard in Resources */,
+				917E8CAC2F7B4E140077CE0A /* AppIcon.icon in Resources */,
 				B00000000000000000000014 /* iOSApp/Settings.bundle in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -252,6 +249,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				917E8CAB2F7B4E140077CE0A /* AppIcon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -288,6 +286,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D00000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = T00000000000000000000002 /* PreBabelLensShare */;
+			targetProxy = X00000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		C00000000000000000000002 /* Debug */ = {
@@ -395,6 +401,7 @@
 		C00000000000000000000005 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = iOSApp/PreBabelLensiOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -420,6 +427,7 @@
 		C00000000000000000000006 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = iOSApp/PreBabelLensiOS.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
