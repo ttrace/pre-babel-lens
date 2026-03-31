@@ -55,6 +55,8 @@
 
 /* Begin PBXFileReference section */
 		917E8CAA2F7B4E140077CE0A /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		917FF0602F7B7BF400FC81C9 /* PreBabelLensiOSRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PreBabelLensiOSRelease.entitlements; sourceTree = "<group>"; };
+		917FF0612F7B7C0A00FC81C9 /* PreBabelLensShareRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PreBabelLensShareRelease.entitlements; sourceTree = "<group>"; };
 		F00000000000000000000001 /* Sources/App/PreBabelLensApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/App/PreBabelLensApp.swift; sourceTree = SOURCE_ROOT; };
 		F00000000000000000000002 /* Sources/Domain/TranslationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/TranslationModels.swift; sourceTree = SOURCE_ROOT; };
 		F00000000000000000000003 /* Sources/Domain/TranslationProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/TranslationProtocols.swift; sourceTree = SOURCE_ROOT; };
@@ -104,6 +106,8 @@
 		G00000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
+				917FF0612F7B7C0A00FC81C9 /* PreBabelLensShareRelease.entitlements */,
+				917FF0602F7B7BF400FC81C9 /* PreBabelLensiOSRelease.entitlements */,
 				G00000000000000000000002,
 				G00000000000000000000003,
 				G00000000000000000000004 /* Products */,
@@ -429,7 +433,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = iOSApp/PreBabelLensiOS.entitlements;
+				CODE_SIGN_ENTITLEMENTS = PreBabelLensiOSRelease.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ZLQNS38K47;
@@ -444,6 +449,7 @@
 				MARKETING_VERSION = 0.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ttrace.prebabellens.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
@@ -480,7 +486,8 @@
 		C00000000000000000000009 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = iOSShareExtension/PreBabelLensShare.entitlements;
+				CODE_SIGN_ENTITLEMENTS = PreBabelLensShareRelease.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ZLQNS38K47;
@@ -495,6 +502,7 @@
 				MARKETING_VERSION = 0.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ttrace.prebabellens.ios.share;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;

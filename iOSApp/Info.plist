@@ -35,5 +35,9 @@
   <string>LaunchScreen</string>
   <key>UIRequiresFullScreen</key>
   <true/>
+  <key>UIRequiredDeviceCapabilities</key>
+  <array>
+    <string>iphone-performance-gaming-tier</string>
+  </array>
 </dict>
 </plist>
