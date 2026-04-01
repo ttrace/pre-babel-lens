@@ -12,6 +12,7 @@ final class ShareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        print("[PBL][SHARE] ShareViewController.viewDidLoad bundle=\(Bundle.main.bundleIdentifier ?? "unknown")")
         configureUI()
         Task { @MainActor in
             await loadSharedText()

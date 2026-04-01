@@ -1,5 +1,11 @@
 import Combine
 import UIKit
+#if canImport(SwiftUI)
+import SwiftUI
+#endif
+#if canImport(Translation)
+import Translation
+#endif
 
 @MainActor
 final class TranslationViewController: UIViewController {
@@ -9,22 +15,41 @@ final class TranslationViewController: UIViewController {
     @IBOutlet private weak var statusLabel: UILabel!
     @IBOutlet private weak var translateButton: UIButton!
 
-    private let viewModel: TranslationViewModel = {
+    private let viewModel: TranslationViewModel
+#if canImport(Translation) && canImport(SwiftUI)
+    private let unsafeRecoveryController: TranslationFrameworkUnsafeRecoveryController
+    private var unsafeRecoveryHostingController: UIHostingController<TranslationFrameworkRecoveryBridgeView>?
+#endif
+
+    private var cancellables: Set<AnyCancellable> = []
+
+    required init?(coder: NSCoder) {
         let preprocess = DeterministicPreprocessEngine()
+#if canImport(Translation) && canImport(SwiftUI)
+        let unsafeRecoveryController = TranslationFrameworkUnsafeRecoveryController()
+        let translationEngine = FoundationModelsTranslationEngine(
+            unsafeSegmentRecoveryEngine: unsafeRecoveryController
+        )
+        self.unsafeRecoveryController = unsafeRecoveryController
+#else
         let translationEngine = FoundationModelsTranslationEngine()
+#endif
         let policy = FixedTranslationEnginePolicy(engine: translationEngine)
-        return TranslationViewModel(
+        self.viewModel = TranslationViewModel(
             orchestrator: TranslationOrchestrator(
                 preprocessEngine: preprocess,
                 enginePolicy: policy
             )
         )
-    }()
-
-    private var cancellables: Set<AnyCancellable> = []
+        super.init(coder: coder)
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        print("[PBL][APP-UIKIT] TranslationViewController.viewDidLoad bundle=\(Bundle.main.bundleIdentifier ?? "unknown")")
+#if canImport(Translation) && canImport(SwiftUI)
+        embedTranslationFrameworkRecoveryBridge()
+#endif
         configureUI()
         bindViewModel()
         refreshLanguageMenu()
@@ -160,6 +185,29 @@ final class TranslationViewController: UIViewController {
             .store(in: &cancellables)
     }
 
+#if canImport(Translation) && canImport(SwiftUI)
+    private func embedTranslationFrameworkRecoveryBridge() {
+        let host = UIHostingController(
+            rootView: TranslationFrameworkRecoveryBridgeView(
+                unsafeRecoveryController: unsafeRecoveryController
+            )
+        )
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        host.view.isHidden = true
+        host.view.isUserInteractionEnabled = false
+        addChild(host)
+        view.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.widthAnchor.constraint(equalToConstant: 0),
+            host.view.heightAnchor.constraint(equalToConstant: 0),
+            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            host.view.topAnchor.constraint(equalTo: view.topAnchor),
+        ])
+        host.didMove(toParent: self)
+        unsafeRecoveryHostingController = host
+    }
+#endif
+
     private func refreshLanguageMenu() {
         let options = viewModel.targetLanguageOptions
         guard !options.isEmpty else {
@@ -191,3 +239,25 @@ final class TranslationViewController: UIViewController {
         }
     }
 }
+
+#if canImport(Translation) && canImport(SwiftUI)
+private struct TranslationFrameworkRecoveryBridgeView: View {
+    @ObservedObject var unsafeRecoveryController: TranslationFrameworkUnsafeRecoveryController
+
+    var body: some View {
+        Group {
+            if let configuration = unsafeRecoveryController.configuration {
+                Color.clear
+                    .frame(width: 0, height: 0)
+                    .id(unsafeRecoveryController.requestGeneration)
+                    .translationTask(configuration) { session in
+                        await unsafeRecoveryController.processPendingRequest(using: session)
+                    }
+            } else {
+                Color.clear
+                    .frame(width: 0, height: 0)
+            }
+        }
+    }
+}
+#endif

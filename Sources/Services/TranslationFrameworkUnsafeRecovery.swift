@@ -1,10 +1,16 @@
 import Foundation
+#if canImport(Logging)
+import Logging
+#endif
 
-#if os(macOS) && canImport(Translation)
+#if canImport(Translation)
 @preconcurrency import Translation
 
 @MainActor
 final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, UnsafeSegmentRecoveryEngine, @unchecked Sendable {
+    #if canImport(Logging)
+    private static let logger = Logger(subsystem: "com.ttrace.prebabellens", category: "translation-framework")
+    #endif
     private struct RecoveryChunk {
         enum Kind {
             case text
@@ -28,6 +34,15 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
 
     private var pendingRequest: PendingRequest?
     private var pendingContinuation: CheckedContinuation<String?, Never>?
+
+    private func log(_ message: String) {
+    #if canImport(Logging)
+        let context = "request=\(pendingRequest?.id.uuidString ?? "none")"
+        TranslationFrameworkUnsafeRecoveryController.logger.debug("\(message, privacy: .public) [\(context)]")
+    #else
+        print("[TranslationFramework] \(message)")
+    #endif
+    }
 
     func recoverUnsafeTranslation(
         sourceText: String,
@@ -63,44 +78,38 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
     func processPendingRequest(using session: TranslationSession) async {
         guard let request = pendingRequest else { return }
 
-        request.onDiagnosticEvent?("translation-framework-recovery: request-started")
+        log("request-started")
         do {
             let availability = LanguageAvailability()
             let status = try await availability.status(
                 for: request.sourceText,
                 to: localeLanguage(from: request.targetLanguage)
             )
-            request.onDiagnosticEvent?(
-                "translation-framework-recovery: availability=\(describe(status))"
-            )
+            log("availability=\(describe(status))")
 
             if status == .unsupported {
-                request.onDiagnosticEvent?("translation-framework-recovery: unsupported-language-pairing")
+                log("unsupported-language-pairing")
                 finishPendingRequest(with: nil)
                 return
             }
 
             if status == .supported {
-                request.onDiagnosticEvent?("translation-framework-recovery: preparing-download-or-consent")
+                log("preparing-download-or-consent")
                 try await session.prepareTranslation()
-                request.onDiagnosticEvent?("translation-framework-recovery: prepare-finished")
+                log("prepare-finished")
             }
 
             let translated = try await translatePreservingSeparators(
                 request.sourceText,
                 using: session
             )
-            request.onDiagnosticEvent?(
-                "translation-framework-recovery: request-finished chars=\(translated.count)"
-            )
+            log("request-finished chars=\(translated.count)")
             finishPendingRequest(with: translated.isEmpty ? nil : translated)
         } catch is CancellationError {
-            request.onDiagnosticEvent?("translation-framework-recovery: cancelled")
+            log("cancelled")
             finishPendingRequest(with: nil)
         } catch {
-            request.onDiagnosticEvent?(
-                "translation-framework-recovery: failed (\(error.localizedDescription))"
-            )
+            log("failed: \(error.localizedDescription)")
             finishPendingRequest(with: nil)
         }
     }

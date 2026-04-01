@@ -1,15 +1,15 @@
 import SwiftUI
 #if os(macOS)
 import AppKit
+#endif
 #if canImport(Translation)
 import Translation
-#endif
 #endif
 
 @main
 struct PreBabelLens: App {
     private let viewModel: TranslationViewModel
-#if os(macOS) && canImport(Translation)
+#if canImport(Translation)
     private let unsafeRecoveryController: TranslationFrameworkUnsafeRecoveryController
 #endif
 #if os(macOS)
@@ -17,8 +17,11 @@ struct PreBabelLens: App {
 #endif
 
     init() {
+        #if os(iOS)
+        print("[PBL][APP-SWIFTUI] PreBabelLens.init bundle=\(Bundle.main.bundleIdentifier ?? "unknown")")
+        #endif
         let preprocess = DeterministicPreprocessEngine()
-#if os(macOS) && canImport(Translation)
+#if canImport(Translation)
         let unsafeRecoveryController = TranslationFrameworkUnsafeRecoveryController()
         let translationEngine = FoundationModelsTranslationEngine(
             unsafeSegmentRecoveryEngine: unsafeRecoveryController
@@ -86,7 +89,7 @@ struct PreBabelLens: App {
 
     private var translationRootView: some View {
         Group {
-#if os(macOS) && canImport(Translation)
+#if canImport(Translation)
             TranslationView(
                 viewModel: viewModel,
                 unsafeRecoveryController: unsafeRecoveryController
