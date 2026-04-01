@@ -160,6 +160,17 @@ Prefer tests for:
 - Preferred command for official release packaging: `scripts/build_notarized_release.sh`.
 - Use `NOTARY_PROFILE` keychain profile for notarization credentials when available.
 
+## iOS Release Branch Policy
+- Dedicated iOS release branch: `release/ios`
+- Purpose: prevent non-iOS commits on `main` (docs/scripts/mac-only changes) from triggering Xcode Cloud iOS release workflows.
+- Xcode Cloud release workflows should target `release/ios` as the primary trigger branch.
+- Day-to-day development may continue on feature branches and `main`, but iOS release candidates should be merged/cherry-picked into `release/ios` before cloud release runs.
+- Keep `release/ios` close to `main`; avoid long-lived divergence unless a hotfix requires temporary separation.
+- When releasing iOS:
+  1. Sync latest stable changes into `release/ios`.
+  2. Confirm version/build metadata on `release/ios`.
+  3. Trigger/verify Xcode Cloud from `release/ios`.
+
 ## Implementation Guidance for Codex
 When making changes:
 1. read surrounding code first

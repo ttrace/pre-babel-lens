@@ -249,3 +249,37 @@ Follow Trump’s second term
 Follow
 The Trump administration in recent days has vacillated between declaring that the war is winding down and threatening to amplify it. While the president has signaled a desire to negotiate an end to the conflict, White House press secretary Karoline Leavitt warned Tuesday that if the regime in Tehran does not end its nuclear ambitions and cease its threats against the United States and its allies, Trump is “prepared to unleash hell” against them.
 """
+
+private let exceededContextWindowTranslationText: String = """
+The other day, I finally submitted the iPhone version of Pre-Babel Lens—a local translation app I’ve been building using Apple Intelligence’s on-device LLM, Foundation Models—to App Store Connect. As of 21:55, the first build has just entered review. If all goes well, it should be available on the App Store by tomorrow.
+
+Pre-Babel Lens has a somewhat classic translation app interface. The source text goes in the top field, and when you press the translate button, the translated text appears in the bottom field.
+
+The source field functions as an editor, so you can type directly into it, paste text, or send text via the share feature from other apps. You can also share files that allow text extraction and load their contents into the app (I plan to add this to the Mac version as well).
+
+The biggest feature is that it uses an on-device LLM for translation, so it works even without an internet connection. Whether you’re on a plane, on a ferry out at sea, or passing through long tunnels on the Tokaido Shinkansen, you can quickly grasp the contents of emails or documents you receive. I haven’t taken it abroad yet, but it should work reliably even in countries where internet access is restricted. Since no data is transmitted, you can safely translate confidential documents.
+
+Using services tied closely to your identity, like Google Translate, and repeatedly feeding them documents that make you wonder “Is this really safe?” can feel a bit unsettling. But with Pre-Babel Lens, you don’t have to worry. Not a single sentence leaves your device. That’s exactly why I built this app.
+
+That said, it’s not without limitations. Apple Intelligence has fairly strict policies.
+
+For example, it won’t translate content related to minors’ actions. It also refuses to translate content involving violence, abuse, or discrimination. Even in political content, expressions that demean specific nations are not translated. Whether it’s Israel, China, Russia, the United States, or Japan, the model tends to avoid translating mocking or insulting expressions based on national attributes.
+
+These restrictions are deeply embedded in the model itself, so there’s nothing app developers can do about them. In some cases, removing certain words allows translation to proceed, but the current version doesn’t attempt that level of inference. These constraints also seem to place a significant burden on Apple Intelligence itself—when triggered, processing slows down, and issues like dropped tags can occur.
+
+Interestingly, despite being fundamentally different from humans, it almost feels human in how it “gets tired” under stressful tasks. That said, it’s not something to laugh off. In the released app, when a restriction is triggered, the translation session is restarted to prevent performance degradation.
+
+If you’re curious, you might want to experiment and see what kinds of limitations exist. Since the app doesn’t communicate externally, there’s no risk of getting banned from a service for trying. From what I’ve observed, the restrictions are determined not at the word level but based on context. Impressive for an LLM—but inconvenient for a translation app. To address this, Pre-Babel Lens includes a feature that highlights and reinserts any source text that couldn’t be translated.
+
+These restrictions frequently come up with international news about conflicts. Of course, if you’re in an environment where you can access real-time news online, it’s probably better to use standard translation tools or cloud-based AI. I’ll continue exploring ways to work around these limitations.
+
+Apple’s OS also includes a dedicated Translation Framework, used in browser translation and the built-in Translate app. Since it uses probabilistic models, it can handle most content—certainly more than rule-based translation systems from around 2010—but it doesn’t consider nuance and context as deeply as large language models. Still, one idea is to fall back to the Translation Framework only for the parts that fail. That’s something to explore going forward.
+
+Continuing with limitations: Apple Intelligence currently supports only 15 languages. These are Danish, German, English, Spanish, French, Italian, Japanese, Korean, Norwegian, Dutch, Portuguese, Swedish, Turkish, Vietnamese, and Chinese. There’s nothing I can do to expand this list. Personally, I’d love to see support for languages like Russian, Arabic, Thai, Bengali, and Hindi.
+
+This is actually my first time building an iOS app entirely on my own. It’s also my first time using Swift (despite having written that “Hello, World!” before). I developed it using Codex, but honestly, setting up the tools and development environment was far more challenging than writing the code itself.
+
+Submitting to the App Store is also completely different from how it was 15 years ago. Some things have become more convenient, but the toolchain—like code signing—feels increasingly complex, almost to the point where you need a specialist. TestFlight, which used to feel like a shady third-party sideloading tool, has become a fully legitimate platform. It’s still a lot of work, though. That said, with Codex (and probably tools like Claude Code), even these procedural hurdles can be handled. It really feels like the world is changing.
+
+While I was writing this blog post, the version I initially submitted passed review (!). By the time you read this, the release version will likely already be available on the App Store. Pre-Babel Lens is available as a free Mac version and a paid iPhone version (150 yen). The source code is also available on GitHub, so if you’re interested in building it yourself, feel free to fork it and give it a try.
+"""
