@@ -1,17 +1,40 @@
 import SwiftUI
 #if os(macOS)
 import AppKit
+#if canImport(Translation)
+import Translation
+#endif
 #endif
 
 @main
 struct PreBabelLens: App {
     private let viewModel: TranslationViewModel
+#if os(macOS) && canImport(Translation)
+    private let unsafeRecoveryController: TranslationFrameworkUnsafeRecoveryController
+#endif
 #if os(macOS)
     private let clipboardDoubleCopyDetector: ClipboardDoubleCopyDetector
 #endif
 
     init() {
         let preprocess = DeterministicPreprocessEngine()
+#if os(macOS) && canImport(Translation)
+        let unsafeRecoveryController = TranslationFrameworkUnsafeRecoveryController()
+        let translationEngine = FoundationModelsTranslationEngine(
+            unsafeSegmentRecoveryEngine: unsafeRecoveryController
+        )
+        self.unsafeRecoveryController = unsafeRecoveryController
+        let policy = FixedTranslationEnginePolicy(engine: translationEngine)
+        let launchInputText = Self.launchInputText()
+
+        self.viewModel = TranslationViewModel(
+            orchestrator: TranslationOrchestrator(
+                preprocessEngine: preprocess,
+                enginePolicy: policy
+            ),
+            launchInputText: launchInputText
+        )
+#else
         let translationEngine = FoundationModelsTranslationEngine()
         let policy = FixedTranslationEnginePolicy(engine: translationEngine)
         let launchInputText = Self.launchInputText()
@@ -23,6 +46,7 @@ struct PreBabelLens: App {
             ),
             launchInputText: launchInputText
         )
+#endif
 #if os(macOS)
         let vm = self.viewModel
         self.clipboardDoubleCopyDetector = ClipboardDoubleCopyDetector { text in
@@ -61,19 +85,28 @@ struct PreBabelLens: App {
     }
 
     private var translationRootView: some View {
-        TranslationView(viewModel: viewModel)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            #if os(macOS)
-            .background(WindowAppearanceConfigurator())
-            #endif
-            .onOpenURL { url in
-                Task { @MainActor in
-                    await viewModel.handleIncomingURL(url)
-                    #if os(macOS)
-                    Self.activateExistingWindow()
-                    #endif
-                }
+        Group {
+#if os(macOS) && canImport(Translation)
+            TranslationView(
+                viewModel: viewModel,
+                unsafeRecoveryController: unsafeRecoveryController
+            )
+#else
+            TranslationView(viewModel: viewModel)
+#endif
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        #if os(macOS)
+        .background(WindowAppearanceConfigurator())
+        #endif
+        .onOpenURL { url in
+            Task { @MainActor in
+                await viewModel.handleIncomingURL(url)
+                #if os(macOS)
+                Self.activateExistingWindow()
+                #endif
             }
+        }
     }
 
     private static func launchInputText() -> String? {

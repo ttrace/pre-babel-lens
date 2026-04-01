@@ -2,6 +2,9 @@ import SwiftUI
 
 #if os(macOS)
     import AppKit
+    #if canImport(Translation)
+        import Translation
+    #endif
 #elseif canImport(UIKit)
     import UIKit
 #endif
@@ -9,6 +12,9 @@ import SwiftUI
 struct TranslationView: View {
     // #region MARK: MARK:State
     @StateObject private var viewModel: TranslationViewModel
+    #if os(macOS) && canImport(Translation)
+        @ObservedObject private var unsafeRecoveryController: TranslationFrameworkUnsafeRecoveryController
+    #endif
     @AppStorage("developerModeEnabled") private var developerModeEnabled: Bool = false
     @AppStorage("developerVerboseModeEnabled") private var developerVerboseModeEnabled: Bool = false
     @AppStorage("autoTranslateImportedTextEnabled") private var autoTranslateImportedTextEnabled: Bool = false
@@ -21,12 +27,30 @@ struct TranslationView: View {
     // #region MARK: Init
     init(viewModel: TranslationViewModel) {
         _viewModel = StateObject(wrappedValue: viewModel)
+        #if os(macOS) && canImport(Translation)
+        self.unsafeRecoveryController = TranslationFrameworkUnsafeRecoveryController()
+        #endif
     }
+
+    #if os(macOS) && canImport(Translation)
+    init(
+        viewModel: TranslationViewModel,
+        unsafeRecoveryController: TranslationFrameworkUnsafeRecoveryController
+    ) {
+        _viewModel = StateObject(wrappedValue: viewModel)
+        self.unsafeRecoveryController = unsafeRecoveryController
+    }
+    #endif
     // #endregion
 
     // #region MARK: Body
     var body: some View {
-        ZStack(alignment: .top) {
+        contentBody
+    }
+
+    @ViewBuilder
+    private var contentBody: some View {
+        let baseView = ZStack(alignment: .top) {
             LinearGradient(
                 colors: colorScheme == .dark
                     ? [
@@ -58,45 +82,29 @@ struct TranslationView: View {
             }
             #endif
         }
-        #if os(macOS)
-        .frame(minHeight: 680)
-        #endif
-        .task {
-            #if os(macOS)
-                if viewModel.consumeLaunchActivationRequest() {
-                    NSApp.activate(ignoringOtherApps: true)
+        #if os(macOS) && canImport(Translation)
+        baseView
+            .overlay {
+                if let configuration = unsafeRecoveryController.configuration {
+                    TranslationUnsafeRecoveryTaskHost(
+                        configuration: configuration,
+                        generation: unsafeRecoveryController.requestGeneration,
+                        unsafeRecoveryController: unsafeRecoveryController
+                    )
                 }
-            #elseif os(iOS)
-                handleSharedImportIfNeeded()
-            #endif
-            await viewModel.translateIfNeededOnLaunch()
-        }
-        #if os(iOS)
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            handleSharedImportIfNeeded()
-        }
-        .alert(item: $viewModel.userAlert) { alert in
-            if alert.offersSettingsShortcut {
-                return Alert(
-                    title: Text(alert.title),
-                    message: Text(alert.message),
-                    primaryButton: .default(Text(isJapaneseLocale ? "Settings を開く" : "Open Settings")) {
-                        openAppSettings()
-                    },
-                    secondaryButton: .cancel(Text(isJapaneseLocale ? "閉じる" : "Close")) {
-                        viewModel.dismissUserAlert()
-                    }
-                )
             }
-
-            return Alert(
-                title: Text(alert.title),
-                message: Text(alert.message),
-                dismissButton: .default(Text(isJapaneseLocale ? "OK" : "OK")) {
-                    viewModel.dismissUserAlert()
-                }
+            .translationViewLifecycleModifiers(
+                viewModel: viewModel,
+                isJapaneseLocale: isJapaneseLocale,
+                handleSharedImportIfNeeded: {}
             )
-        }
+        #else
+        baseView
+            .translationViewLifecycleModifiers(
+                viewModel: viewModel,
+                isJapaneseLocale: isJapaneseLocale,
+                handleSharedImportIfNeeded: handleSharedImportIfNeeded
+            )
         #endif
     }
     // #endregion
@@ -657,5 +665,79 @@ struct TranslationView: View {
 
     private var isJapaneseLocale: Bool {
         Locale.preferredLanguages.first?.hasPrefix("ja") == true
+    }
+}
+
+#if os(macOS) && canImport(Translation)
+private struct TranslationUnsafeRecoveryTaskHost: View {
+    let configuration: TranslationSession.Configuration
+    let generation: UUID
+    let unsafeRecoveryController: TranslationFrameworkUnsafeRecoveryController
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .id(generation)
+            .translationTask(configuration) { session in
+                await unsafeRecoveryController.processPendingRequest(using: session)
+            }
+    }
+}
+#endif
+
+private extension View {
+    @ViewBuilder
+    func translationViewLifecycleModifiers(
+        viewModel: TranslationViewModel,
+        isJapaneseLocale: Bool,
+        handleSharedImportIfNeeded: @escaping () -> Void
+    ) -> some View {
+        #if os(macOS)
+        self
+            .frame(minHeight: 680)
+            .task {
+                if viewModel.consumeLaunchActivationRequest() {
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                await viewModel.translateIfNeededOnLaunch()
+            }
+        #elseif os(iOS)
+        self
+            .task {
+                handleSharedImportIfNeeded()
+                await viewModel.translateIfNeededOnLaunch()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                handleSharedImportIfNeeded()
+            }
+            .alert(item: Binding(get: { viewModel.userAlert }, set: { _ in viewModel.dismissUserAlert() })) { alert in
+                if alert.offersSettingsShortcut {
+                    return Alert(
+                        title: Text(alert.title),
+                        message: Text(alert.message),
+                        primaryButton: .default(Text(isJapaneseLocale ? "Settings を開く" : "Open Settings")) {
+                            guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                            UIApplication.shared.open(url)
+                        },
+                        secondaryButton: .cancel(Text(isJapaneseLocale ? "閉じる" : "Close")) {
+                            viewModel.dismissUserAlert()
+                        }
+                    )
+                }
+
+                return Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    dismissButton: .default(Text(isJapaneseLocale ? "OK" : "OK")) {
+                        viewModel.dismissUserAlert()
+                    }
+                )
+            }
+        #else
+        self
+            .task {
+                await viewModel.translateIfNeededOnLaunch()
+            }
+        #endif
     }
 }

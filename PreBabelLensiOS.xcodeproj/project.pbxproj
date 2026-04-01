@@ -21,6 +21,7 @@
 		B00000000000000000000010 /* Sources/Services/ClipboardDoubleCopyDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000000A /* Sources/Services/ClipboardDoubleCopyDetector.swift */; };
 		B00000000000000000000011 /* Sources/Services/EnginePolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000000B /* Sources/Services/EnginePolicies.swift */; };
 		B00000000000000000000012 /* Sources/Services/TranslationOrchestrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000000C /* Sources/Services/TranslationOrchestrator.swift */; };
+		B00000000000000000000019 /* Sources/Services/TranslationFrameworkUnsafeRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000001C /* Sources/Services/TranslationFrameworkUnsafeRecovery.swift */; };
 		B00000000000000000000013 /* iOSApp/Base.lproj/LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000013 /* iOSApp/Base.lproj/LaunchScreen.storyboard */; };
 		B00000000000000000000014 /* iOSApp/Settings.bundle in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000014 /* iOSApp/Settings.bundle */; };
 		B00000000000000000000015 /* iOSApp/Shared/SharedImportStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000015 /* iOSApp/Shared/SharedImportStore.swift */; };
@@ -82,6 +83,7 @@
 		F00000000000000000000017 /* iOSShareExtension/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = iOSShareExtension/Info.plist; sourceTree = SOURCE_ROOT; };
 		F00000000000000000000018 /* iOSShareExtension/ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSShareExtension/ShareViewController.swift; sourceTree = SOURCE_ROOT; };
 		F00000000000000000000019 /* iOSShareExtension/PreBabelLensShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = iOSShareExtension/PreBabelLensShare.entitlements; sourceTree = SOURCE_ROOT; };
+		F0000000000000000000001C /* Sources/Services/TranslationFrameworkUnsafeRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Services/TranslationFrameworkUnsafeRecovery.swift; sourceTree = SOURCE_ROOT; };
 		F0000000000000000000001B /* PreBabelLensShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PreBabelLensShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -129,6 +131,7 @@
 				F0000000000000000000000A /* Sources/Services/ClipboardDoubleCopyDetector.swift */,
 				F0000000000000000000000B /* Sources/Services/EnginePolicies.swift */,
 				F0000000000000000000000C /* Sources/Services/TranslationOrchestrator.swift */,
+				F0000000000000000000001C /* Sources/Services/TranslationFrameworkUnsafeRecovery.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -277,6 +280,7 @@
 				B00000000000000000000010 /* Sources/Services/ClipboardDoubleCopyDetector.swift in Sources */,
 				B00000000000000000000011 /* Sources/Services/EnginePolicies.swift in Sources */,
 				B00000000000000000000012 /* Sources/Services/TranslationOrchestrator.swift in Sources */,
+				B00000000000000000000019 /* Sources/Services/TranslationFrameworkUnsafeRecovery.swift in Sources */,
 				B00000000000000000000015 /* iOSApp/Shared/SharedImportStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

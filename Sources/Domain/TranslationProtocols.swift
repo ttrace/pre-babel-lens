@@ -26,6 +26,15 @@ protocol TranslationEnginePolicy: Sendable {
     func resolveEngine(for request: TranslationRequest) -> TranslationEngine
 }
 
+protocol UnsafeSegmentRecoveryEngine: Sendable {
+    func recoverUnsafeTranslation(
+        sourceText: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        onDiagnosticEvent: (@Sendable (_ message: String) -> Void)?
+    ) async -> String?
+}
+
 extension TranslationEngine {
     func translate(
         _ input: TranslationInput,
@@ -36,5 +45,16 @@ extension TranslationEngine {
             onPartialResult?(output.segmentIndex, output.translatedText)
         }
         return outputs
+    }
+}
+
+struct NoOpUnsafeSegmentRecoveryEngine: UnsafeSegmentRecoveryEngine {
+    func recoverUnsafeTranslation(
+        sourceText: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        onDiagnosticEvent: (@Sendable (_ message: String) -> Void)?
+    ) async -> String? {
+        nil
     }
 }

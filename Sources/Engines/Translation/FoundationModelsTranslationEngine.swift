@@ -2,6 +2,12 @@ import Foundation
 import NaturalLanguage
 
 struct FoundationModelsTranslationEngine: DiagnosticCapableTranslationEngine {
+    private let unsafeSegmentRecoveryEngine: UnsafeSegmentRecoveryEngine
+
+    init(unsafeSegmentRecoveryEngine: UnsafeSegmentRecoveryEngine = NoOpUnsafeSegmentRecoveryEngine()) {
+        self.unsafeSegmentRecoveryEngine = unsafeSegmentRecoveryEngine
+    }
+
     var name: String {
 #if canImport(FoundationModels)
         if #available(macOS 26.0, iOS 26.0, *) {
@@ -16,7 +22,10 @@ struct FoundationModelsTranslationEngine: DiagnosticCapableTranslationEngine {
     func translate(_ input: TranslationInput) async throws -> [SegmentOutput] {
 #if canImport(FoundationModels)
         if #available(macOS 26.0, iOS 26.0, *) {
-            return try await FoundationModelsRuntimeTranslator.translate(input)
+            return try await FoundationModelsRuntimeTranslator.translate(
+                input,
+                unsafeSegmentRecoveryEngine: unsafeSegmentRecoveryEngine
+            )
         }
         throw FoundationModelsIntegrationError.unsupportedOperatingSystem
 #else
@@ -32,6 +41,7 @@ struct FoundationModelsTranslationEngine: DiagnosticCapableTranslationEngine {
         if #available(macOS 26.0, iOS 26.0, *) {
             return try await FoundationModelsRuntimeTranslator.translate(
                 input,
+                unsafeSegmentRecoveryEngine: unsafeSegmentRecoveryEngine,
                 onPartialResult: onPartialResult
             )
         }
@@ -50,6 +60,7 @@ struct FoundationModelsTranslationEngine: DiagnosticCapableTranslationEngine {
         if #available(macOS 26.0, iOS 26.0, *) {
             return try await FoundationModelsRuntimeTranslator.translate(
                 input,
+                unsafeSegmentRecoveryEngine: unsafeSegmentRecoveryEngine,
                 onPartialResult: onPartialResult,
                 onDiagnosticEvent: onDiagnosticEvent
             )
@@ -150,6 +161,7 @@ private enum FoundationModelsRuntimeTranslator {
 
     static func translate(
         _ input: TranslationInput,
+        unsafeSegmentRecoveryEngine: UnsafeSegmentRecoveryEngine,
         onPartialResult: (@Sendable (_ segmentIndex: Int, _ partialTranslation: String) -> Void)? = nil,
         onDiagnosticEvent: (@Sendable (_ message: String) -> Void)? = nil
     ) async throws -> [SegmentOutput] {
@@ -195,8 +207,13 @@ private enum FoundationModelsRuntimeTranslator {
                             "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): unsafe-no-retry-source-returned (\(error.localizedDescription))"
                         )
                         finalResult = StructuredTranslationResult(
-                            translation: sourceFallbackTranslation(
-                                sourceText: segment.text
+                            translation: await recoverUnsafeTranslationIfPossible(
+                                sourceText: segment.text,
+                                input: input,
+                                segmentIndex: segment.index,
+                                preprocessKind: segment.kind,
+                                unsafeSegmentRecoveryEngine: unsafeSegmentRecoveryEngine,
+                                onDiagnosticEvent: onDiagnosticEvent
                             ),
                             outputBreakTagCount: 0
                         )
@@ -233,8 +250,13 @@ private enum FoundationModelsRuntimeTranslator {
                                 "segment=\(segment.index), preprocess-kind=\(segment.kind.rawValue): retry-after-session-refresh-failed-source-returned (\(error.localizedDescription))"
                             )
                             finalResult = StructuredTranslationResult(
-                                translation: sourceFallbackTranslation(
-                                    sourceText: segment.text
+                                translation: await recoverUnsafeTranslationIfPossible(
+                                    sourceText: segment.text,
+                                    input: input,
+                                    segmentIndex: segment.index,
+                                    preprocessKind: segment.kind,
+                                    unsafeSegmentRecoveryEngine: unsafeSegmentRecoveryEngine,
+                                    onDiagnosticEvent: onDiagnosticEvent
                                 ),
                                 outputBreakTagCount: 0
                             )
@@ -885,6 +907,53 @@ private enum FoundationModelsRuntimeTranslator {
 
     private static func sourceFallbackTranslation(sourceText: String) -> String {
         sourceText
+    }
+
+    private static func recoverUnsafeTranslationIfPossible(
+        sourceText: String,
+        input: TranslationInput,
+        segmentIndex: Int,
+        preprocessKind: SegmentKind,
+        unsafeSegmentRecoveryEngine: UnsafeSegmentRecoveryEngine,
+        onDiagnosticEvent: (@Sendable (_ message: String) -> Void)?
+    ) async -> String {
+        onDiagnosticEvent?(
+            "segment=\(segmentIndex), preprocess-kind=\(preprocessKind.rawValue): attempting-translation-framework-recovery"
+        )
+
+        if let recovered = await unsafeSegmentRecoveryEngine.recoverUnsafeTranslation(
+            sourceText: sourceText,
+            sourceLanguage: input.detectedLanguageCode ?? input.sourceLanguage,
+            targetLanguage: input.targetLanguage,
+            onDiagnosticEvent: onDiagnosticEvent
+        ) {
+            let completed = normalizeRecoveredUnsafeTranslation(
+                recovered,
+                sourceText: sourceText
+            )
+            onDiagnosticEvent?(
+                "segment=\(segmentIndex), preprocess-kind=\(preprocessKind.rawValue): translation-framework-recovery-succeeded"
+            )
+            return completed
+        }
+
+        onDiagnosticEvent?(
+            "segment=\(segmentIndex), preprocess-kind=\(preprocessKind.rawValue): translation-framework-recovery-unavailable-source-returned"
+        )
+        return sourceFallbackTranslation(sourceText: sourceText)
+    }
+
+    private static func normalizeRecoveredUnsafeTranslation(
+        _ recoveredText: String,
+        sourceText: String
+    ) -> String {
+        let sourcePromptText = sourceTextForPrompt(sourceText)
+        let recoveredPromptText = sourceTextForPrompt(recoveredText)
+        let completed = appendMissingTrailingBreakMarkers(
+            from: sourcePromptText,
+            to: recoveredPromptText
+        )
+        return normalizeBreakTagsToNewline(in: completed)
     }
 
     private static func isContextWindowExceededError(_ error: Error) -> Bool {
