@@ -199,6 +199,7 @@ When making changes:
 4. avoid unrelated refactors
 5. explain tradeoffs clearly in summaries
 6. call out uncertainty instead of guessing
+7. before creating any commit, ask the user for explicit confirmation
 
 If introducing a new abstraction:
 - explain why it is needed

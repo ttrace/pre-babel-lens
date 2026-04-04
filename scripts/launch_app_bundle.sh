@@ -67,7 +67,7 @@ cat > "${INFO_PLIST}" <<'PLIST'
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
-  <string>14.0</string>
+  <string>26.0</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
   <key>CFBundleLocalizations</key>
