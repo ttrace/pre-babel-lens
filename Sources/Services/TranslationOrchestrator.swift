@@ -206,22 +206,18 @@ struct TranslationOrchestrator: Sendable {
     }
 
     private func isSameLanguagePair(sourceLanguage: String, targetLanguage: String) -> Bool {
-        let source = normalizedLanguageCode(sourceLanguage)
-        let target = normalizedLanguageCode(targetLanguage)
+        let source = normalizedLanguageIdentifier(sourceLanguage)
+        let target = normalizedLanguageIdentifier(targetLanguage)
         guard !source.isEmpty, !target.isEmpty, source != "und", target != "und" else {
             return false
         }
         return source == target
     }
 
-    private func normalizedLanguageCode(_ code: String) -> String {
-        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if let hyphen = trimmed.firstIndex(of: "-") {
-            return String(trimmed[..<hyphen])
-        }
-        if let underscore = trimmed.firstIndex(of: "_") {
-            return String(trimmed[..<underscore])
-        }
-        return trimmed
+    private func normalizedLanguageIdentifier(_ code: String) -> String {
+        code
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
     }
 }

@@ -8,12 +8,30 @@ struct TranslationFrameworkPrimaryTranslationEngine: DiagnosticCapableTranslatio
         case unsupportedLanguagePairing = "unsupported_language_pairing"
     }
 
-    private actor RecoveryDiagnosticState {
+    private final class RecoveryDiagnosticState: @unchecked Sendable {
+        private let lock = NSLock()
         private(set) var failureKind: RecoveryFailureKind?
+        private(set) var insertedSourceFallback: Bool = false
 
         func capture(message: String) {
-            guard let parsed = TranslationFrameworkPrimaryTranslationEngine.parseRecoveryFailureKind(from: message) else { return }
-            failureKind = parsed
+            lock.lock()
+            if let parsed = TranslationFrameworkPrimaryTranslationEngine.parseRecoveryFailureKind(from: message) {
+                failureKind = parsed
+            }
+            if message.contains("translation-framework-recovery:source-fallback-inserted") {
+                insertedSourceFallback = true
+            }
+            lock.unlock()
+        }
+
+        func snapshot() -> (failureKind: RecoveryFailureKind?, insertedSourceFallback: Bool) {
+            lock.lock()
+            let snapshot = (
+                failureKind: failureKind,
+                insertedSourceFallback: insertedSourceFallback
+            )
+            lock.unlock()
+            return snapshot
         }
     }
 
@@ -52,35 +70,99 @@ struct TranslationFrameworkPrimaryTranslationEngine: DiagnosticCapableTranslatio
 
         for segment in segments {
             try Task.checkCancellation()
+            if Self.verboseLoggingEnabled {
+                let sourceForLog = Self.sanitizedForLog(segment.text) ?? "(empty)"
+                onDiagnosticEvent?(
+                    "verbose tf-input segment=\(segment.index) chars=\(segment.text.count) source=\(sourceForLog)"
+                )
+            }
+
             let recoveryDiagnosticState = RecoveryDiagnosticState()
             let translated = await recoveryEngine.recoverUnsafeTranslation(
                 sourceText: segment.text,
                 sourceLanguage: input.sourceLanguage,
                 targetLanguage: input.targetLanguage,
                 onDiagnosticEvent: { message in
-                    Task { await recoveryDiagnosticState.capture(message: message) }
+                    recoveryDiagnosticState.capture(message: message)
                     onDiagnosticEvent?(message)
                 }
             )
-            let recoveryFailureKind = await recoveryDiagnosticState.failureKind
+            let recoveryDiagnosticSnapshot = recoveryDiagnosticState.snapshot()
+            let recoveryFailureKind = recoveryDiagnosticSnapshot.failureKind
 
-            let normalized = translated?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !normalized.isEmpty else {
-                throw TranslationFrameworkPrimaryEngineError.recoveryFailed(
-                    segmentIndex: segment.index,
-                    sourceLanguage: input.sourceLanguage,
+            let translatedText = translated ?? ""
+            if translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               recoveryFailureKind == .unsupportedLanguagePairing {
+                onDiagnosticEvent?(
+                    "segment=\(segment.index): tf-primary-retry-with-auto-source-after-unsupported-pairing"
+                )
+
+                let retryDiagnosticState = RecoveryDiagnosticState()
+                let retried = await recoveryEngine.recoverUnsafeTranslation(
+                    sourceText: segment.text,
+                    sourceLanguage: "und",
                     targetLanguage: input.targetLanguage,
-                    failureKind: recoveryFailureKind
+                    onDiagnosticEvent: { message in
+                        retryDiagnosticState.capture(message: message)
+                        onDiagnosticEvent?(message)
+                    }
+                )
+                let retrySnapshot = retryDiagnosticState.snapshot()
+                let retriedText = retried ?? ""
+                if !retriedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if Self.verboseLoggingEnabled {
+                        let outputForLog = Self.sanitizedForLog(retriedText) ?? "(empty)"
+                        onDiagnosticEvent?(
+                            "verbose tf-output segment=\(segment.index) chars=\(retriedText.count) output=\(outputForLog)"
+                        )
+                    }
+
+                    onPartialResult?(segment.index, retriedText)
+                    outputs.append(
+                        SegmentOutput(
+                            segmentIndex: segment.index,
+                            sourceText: segment.text,
+                            translatedText: retriedText,
+                            isUnsafeFallback: retrySnapshot.insertedSourceFallback,
+                            isUnsafeRecoveredByTranslationFramework: false
+                        )
+                    )
+                    continue
+                }
+            }
+
+            guard !translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                let reason = recoveryFailureKind?.rawValue ?? "unknown"
+                onDiagnosticEvent?(
+                    "segment=\(segment.index): tf-primary-empty-result-fallback-to-source reason=\(reason)"
+                )
+                onPartialResult?(segment.index, segment.text)
+                outputs.append(
+                    SegmentOutput(
+                        segmentIndex: segment.index,
+                        sourceText: segment.text,
+                        translatedText: segment.text,
+                        isUnsafeFallback: true,
+                        isUnsafeRecoveredByTranslationFramework: false
+                    )
+                )
+                continue
+            }
+
+            if Self.verboseLoggingEnabled {
+                let outputForLog = Self.sanitizedForLog(translatedText) ?? "(empty)"
+                onDiagnosticEvent?(
+                    "verbose tf-output segment=\(segment.index) chars=\(translatedText.count) output=\(outputForLog)"
                 )
             }
 
-            onPartialResult?(segment.index, normalized)
+            onPartialResult?(segment.index, translatedText)
             outputs.append(
                 SegmentOutput(
                     segmentIndex: segment.index,
                     sourceText: segment.text,
-                    translatedText: normalized,
-                    isUnsafeFallback: false,
+                    translatedText: translatedText,
+                    isUnsafeFallback: recoveryDiagnosticSnapshot.insertedSourceFallback,
                     isUnsafeRecoveredByTranslationFramework: false
                 )
             )
@@ -95,6 +177,28 @@ struct TranslationFrameworkPrimaryTranslationEngine: DiagnosticCapableTranslatio
         guard let range = message.range(of: marker) else { return nil }
         let raw = String(message[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
         return RecoveryFailureKind(rawValue: raw)
+    }
+
+    private static func sanitizedForLog(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let compact = text.replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !compact.isEmpty else { return nil }
+
+        let limit = 1_500
+        guard compact.count > limit else { return compact }
+
+        let headCount = 1_000
+        let tailCount = 350
+        let omitted = compact.count - headCount - tailCount
+        let head = compact.prefix(headCount)
+        let tail = compact.suffix(tailCount)
+        return "\(head)...(truncated \(omitted) chars)...\(tail)"
+    }
+
+    private static var verboseLoggingEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "developerVerboseModeEnabled")
     }
 }
 

@@ -24,6 +24,28 @@ struct TranslationOrchestratorTests {
         #expect(output.containsUnsafeFallback == true)
         #expect(output.segmentOutputs.contains(where: { $0.isUnsafeFallback }))
     }
+
+    @Test
+    func enToEnGBDoesNotTriggerSameLanguageFallback() async throws {
+        let engine = MarkerTranslationEngine()
+        let orchestrator = TranslationOrchestrator(
+            preprocessEngine: DeterministicPreprocessEngine(),
+            enginePolicy: FixedTranslationEnginePolicy(engine: engine)
+        )
+        let request = TranslationRequest(
+            sourceLanguage: "en",
+            targetLanguage: "en-GB",
+            text: "This agreement remains in effect.",
+            glossary: [],
+            experimentMode: .segmented
+        )
+
+        let output = try await orchestrator.translate(request)
+
+        #expect(output.analysis.engineName == engine.name)
+        #expect(output.translatedText.contains("MARKER:"))
+        #expect(output.containsUnsafeFallback == false)
+    }
 }
 
 private struct UnsafeSampleEchoEngine: TranslationEngine {
@@ -40,6 +62,24 @@ private struct UnsafeSampleEchoEngine: TranslationEngine {
                 sourceText: segment.text,
                 translatedText: segment.text,
                 isUnsafeFallback: segment.text.contains("blood clots")
+            )
+        }
+    }
+}
+
+private struct MarkerTranslationEngine: TranslationEngine {
+    let name: String = "marker-engine"
+
+    func translate(_ input: TranslationInput) async throws -> [SegmentOutput] {
+        let segments = input.segments.isEmpty
+            ? [TextSegment(index: 0, text: input.originalText)]
+            : input.segments
+
+        return segments.map { segment in
+            SegmentOutput(
+                segmentIndex: segment.index,
+                sourceText: segment.text,
+                translatedText: "MARKER:\(segment.text)"
             )
         }
     }

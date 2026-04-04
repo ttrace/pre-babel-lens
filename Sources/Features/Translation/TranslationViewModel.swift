@@ -2,6 +2,24 @@ import Foundation
 
 @MainActor
 final class TranslationViewModel: ObservableObject {
+    enum StatusNoticeKind: Equatable {
+        case sameLanguageUntranslatable
+        case aiFallbackToMachineTranslation
+        case unknownSourceLanguage
+    }
+
+    struct StatusNotice: Equatable, Identifiable {
+        enum Style: Equatable, Hashable {
+            case orange
+            case blue
+        }
+
+        let id = UUID()
+        let markerText: String
+        let text: String
+        let style: Style
+    }
+
     struct UserAlert: Identifiable {
         let id = UUID()
         let title: String
@@ -37,6 +55,7 @@ final class TranslationViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var userAlert: UserAlert?
     @Published var developerLogs: [String] = []
+    @Published private(set) var statusNotices: [StatusNotice] = []
     @Published private(set) var status: TranslationStatus = .ready
     @Published private(set) var targetLanguageOptions: [TargetLanguageOption] = []
     @Published private(set) var isAppleIntelligenceAvailable: Bool = false
@@ -75,7 +94,8 @@ final class TranslationViewModel: ObservableObject {
         refreshEnginePreference()
 
         if let launchInputText {
-            let trimmed = launchInputText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = normalizedLineEndings(in: launchInputText)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 self.inputText = trimmed
                 self.shouldTranslateOnLaunch = true
@@ -138,7 +158,8 @@ final class TranslationViewModel: ObservableObject {
     @discardableResult
     func importSharedTextIfNeeded() -> String? {
         guard let text = SharedImportStore.consumePendingText() else { return nil }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = normalizedLineEndings(in: text)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         guard lastHandledSharedImportKey != trimmed else { return nil }
         lastHandledSharedImportKey = trimmed
@@ -149,7 +170,8 @@ final class TranslationViewModel: ObservableObject {
     #endif
 
     private func handleExternalTriggerText(_ text: String, source: String) async {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = normalizedLineEndings(in: text)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let deduplicationKey = "\(targetLanguage)\u{1F}\(experimentMode.rawValue)\u{1F}\(trimmed)"
         guard lastHandledIncomingURLKey != deduplicationKey else { return }
@@ -216,10 +238,15 @@ final class TranslationViewModel: ObservableObject {
     }
 
     private func performTranslation() async {
+        let normalizedInput = normalizedLineEndings(in: inputText)
+        if inputText != normalizedInput {
+            inputText = normalizedInput
+        }
+
         let request = TranslationRequest(
             sourceLanguage: "und",
             targetLanguage: targetLanguage,
-            text: inputText,
+            text: normalizedInput,
             glossary: parseGlossary(glossaryText),
             experimentMode: experimentMode
         )
@@ -237,6 +264,7 @@ final class TranslationViewModel: ObservableObject {
             aiLanguageSupported = true
             errorMessage = nil
             userAlert = nil
+            statusNotices = []
             status = .ready
             pendingTranslationRequestStartedAt = nil
             resetSessionMetricsState()
@@ -263,6 +291,7 @@ final class TranslationViewModel: ObservableObject {
         aiLanguageSupported = true
         errorMessage = nil
         userAlert = nil
+        statusNotices = []
         partialTranslationsBySegment = [:]
         partialJoinersAfter = []
         status = .processing(mode: experimentMode)
@@ -318,9 +347,11 @@ final class TranslationViewModel: ObservableObject {
             aiLanguageSupported = output.analysis.input.isDetectedLanguageSupportedByAppleIntelligence
             errorMessage = nil
             userAlert = nil
+            statusNotices = makeStatusNotices(output: output, request: request)
             status = .completed
         } catch is CancellationError {
             status = .stopped
+            statusNotices = []
             appendSessionLog("translation-cancelled")
         } catch let pipelineError as TranslationPipelineError {
             if let detected = pipelineError.detectedLanguageCode {
@@ -333,6 +364,7 @@ final class TranslationViewModel: ObservableObject {
             } else {
                 errorMessage = pipelineError.localizedDescription
             }
+            statusNotices = []
             status = .ready
             appendSessionLog("pipeline-error: \(pipelineError.localizedDescription)")
         } catch {
@@ -342,6 +374,7 @@ final class TranslationViewModel: ObservableObject {
             } else {
                 errorMessage = error.localizedDescription
             }
+            statusNotices = []
             status = .ready
             appendSessionLog(detailedErrorLog(from: error))
         }
@@ -449,8 +482,8 @@ final class TranslationViewModel: ObservableObject {
             }
 
             if let languagePair {
-                let source = languagePair.source
-                let target = languagePair.target
+                let source = languageAvailabilityLabel(for: languagePair.source, role: .source)
+                let target = languageAvailabilityLabel(for: languagePair.target, role: .target)
                 switch recoveryFailureKind {
                 case "missing_source_language":
                     return UserAlert(
@@ -483,6 +516,17 @@ final class TranslationViewModel: ObservableObject {
                         inlineMessage: isJapaneseLocale
                             ? "\(source) と \(target) がありません。"
                             : "\(source) and \(target) are unavailable.",
+                        offersSettingsShortcut: false
+                    )
+                case "unsupported_language_pairing":
+                    return UserAlert(
+                        title: isJapaneseLocale ? "翻訳言語ペアを確認してください" : "Check Translation Language Pair",
+                        message: isJapaneseLocale
+                            ? "言語ペア（\(source) -> \(target)）が利用できません。Settingsで言語データの状況を確認し、必要に応じてダウンロードしてから再実行してください。"
+                            : "The language pair (\(source) -> \(target)) is unavailable. Check language data in Settings and download if needed, then try again.",
+                        inlineMessage: isJapaneseLocale
+                            ? "言語ペア（\(source) -> \(target)）が利用できません。"
+                            : "The language pair (\(source) -> \(target)) is unavailable.",
                         offersSettingsShortcut: false
                     )
                 default:
@@ -648,6 +692,83 @@ final class TranslationViewModel: ObservableObject {
             return String(trimmed[..<underscoreIndex])
         }
         return trimmed
+    }
+
+    private func normalizedLineEndings(in text: String) -> String {
+        text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+    }
+
+    private func makeStatusNotices(output: TranslationOutput, request: TranslationRequest) -> [StatusNotice] {
+        var noticeKinds: [StatusNoticeKind] = []
+
+        let detected = (output.analysis.input.detectedLanguageCode ?? "").lowercased()
+        let target = request.targetLanguage.lowercased()
+        let isSameLanguageByCode = !detected.isEmpty
+            && detected != "und"
+            && normalizedLanguageCode(detected) == normalizedLanguageCode(target)
+        let allSegmentsFallbackToSource = !output.segmentOutputs.isEmpty
+            && output.segmentOutputs.allSatisfy({ $0.isUnsafeFallback && !$0.isUnsafeRecoveredByTranslationFramework })
+            && output.translatedText == request.text
+
+        if output.analysis.engineName == "same-language-fallback"
+            || (isSameLanguageByCode && allSegmentsFallbackToSource) {
+            noticeKinds.append(.sameLanguageUntranslatable)
+        }
+
+        if output.segmentOutputs.contains(where: \.isUnsafeRecoveredByTranslationFramework) {
+            noticeKinds.append(.aiFallbackToMachineTranslation)
+        }
+
+        if detected == "und",
+           output.translatedText == request.text,
+           output.segmentOutputs.allSatisfy({ $0.isUnsafeFallback }) {
+            noticeKinds.append(.unknownSourceLanguage)
+        }
+
+        return noticeKinds.map(statusNotice(for:))
+    }
+
+    private func statusNotice(for kind: StatusNoticeKind) -> StatusNotice {
+        switch kind {
+        case .sameLanguageUntranslatable:
+            return StatusNotice(
+                markerText: "text",
+                text: "同一言語のために翻訳できませんでした",
+                style: .orange
+            )
+        case .aiFallbackToMachineTranslation:
+            return StatusNotice(
+                markerText: "text",
+                text: "AI出力できなかったため機械翻訳しました",
+                style: .blue
+            )
+        case .unknownSourceLanguage:
+            return StatusNotice(
+                markerText: "text",
+                text: "元言語が不明だったため翻訳できませんでした",
+                style: .orange
+            )
+        }
+    }
+
+    private enum LanguageRole {
+        case source
+        case target
+    }
+
+    private func languageAvailabilityLabel(for code: String, role: LanguageRole) -> String {
+        let normalized = normalizedLanguageCode(code)
+        if normalized.isEmpty || normalized == "und" {
+            switch role {
+            case .source:
+                return isJapaneseLocale ? "入力言語" : "source language"
+            case .target:
+                return isJapaneseLocale ? "出力言語" : "target language"
+            }
+        }
+        return code
     }
 
 }

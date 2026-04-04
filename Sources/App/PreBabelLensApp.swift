@@ -74,6 +74,7 @@ struct PreBabelLens: App {
         mainScene
             .commands {
                 CommandGroup(replacing: .newItem) { }
+                TranslationMenuCommands(viewModel: viewModel)
             }
         #else
         mainScene
@@ -149,6 +150,93 @@ struct PreBabelLens: App {
 }
 
 #if os(macOS)
+private struct TranslationMenuCommands: Commands {
+    @ObservedObject var viewModel: TranslationViewModel
+
+    var body: some Commands {
+        CommandMenu(topMenuTitle) {
+            Button(translateTitle) {
+                Task { await viewModel.translate() }
+            }
+            .keyboardShortcut(.return, modifiers: [.command])
+            .disabled(viewModel.isTranslating || viewModel.targetLanguageOptions.isEmpty)
+
+            Button(stopTitle) {
+                viewModel.stopTranslation()
+            }
+            .keyboardShortcut(".", modifiers: [.command])
+            .disabled(!viewModel.isTranslating)
+
+            Divider()
+
+            Menu(targetLanguageMenuTitle) {
+                if viewModel.isAppleIntelligenceAvailable {
+                    Button(
+                        viewModel.usesAppleIntelligenceTranslation
+                            ? switchToStandardTitle
+                            : switchToAITitle
+                    ) {
+                        if viewModel.usesAppleIntelligenceTranslation {
+                            viewModel.switchToStandardTranslation()
+                        } else {
+                            viewModel.switchToAppleIntelligenceTranslation()
+                        }
+                    }
+                } else {
+                    Button(aiUnavailableTitle) { }
+                        .disabled(true)
+                }
+
+                Divider()
+
+                ForEach(viewModel.targetLanguageOptions) { option in
+                    Button {
+                        viewModel.targetLanguage = option.code
+                    } label: {
+                        if option.code == viewModel.targetLanguage {
+                            Label(option.menuLabel(showCode: false), systemImage: "checkmark")
+                        } else {
+                            Text(option.menuLabel(showCode: false))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var topMenuTitle: String {
+        isJapaneseLocale ? "翻訳" : "Translate"
+    }
+
+    private var translateTitle: String {
+        isJapaneseLocale ? "翻訳" : "Translate"
+    }
+
+    private var stopTitle: String {
+        isJapaneseLocale ? "中断" : "Stop"
+    }
+
+    private var targetLanguageMenuTitle: String {
+        isJapaneseLocale ? "翻訳先言語" : "Target Language"
+    }
+
+    private var switchToAITitle: String {
+        isJapaneseLocale ? "AI翻訳に切り替え" : "Switch to AI Translation"
+    }
+
+    private var switchToStandardTitle: String {
+        isJapaneseLocale ? "機械翻訳に切り替え" : "Switch to Standard Translation"
+    }
+
+    private var aiUnavailableTitle: String {
+        isJapaneseLocale ? "AI翻訳はこのデバイスで利用できません" : "AI translation unavailable on this device"
+    }
+
+    private var isJapaneseLocale: Bool {
+        Locale.preferredLanguages.first?.hasPrefix("ja") == true
+    }
+}
+
 private struct WindowAppearanceConfigurator: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()

@@ -28,10 +28,19 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
         let value: String
     }
 
-    struct PendingRequest {
+    private enum SourceLanguageResolutionReason: String {
+        case requested
+        case estimatedFromText = "estimated_from_text"
+        case fallbackPreviousSuccess = "fallback_previous_success"
+        case undetermined
+    }
+
+    private struct PendingRequest {
         let id: UUID
         let sourceText: String
         let sourceLanguage: String
+        let resolvedSourceLanguageCode: String?
+        let sourceLanguageResolutionReason: SourceLanguageResolutionReason
         let targetLanguage: String
         let onDiagnosticEvent: (@Sendable (_ message: String) -> Void)?
     }
@@ -41,6 +50,7 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
 
     private var pendingRequest: PendingRequest?
     private var pendingContinuation: CheckedContinuation<String?, Never>?
+    private var lastSuccessfulSourceLanguageCode: String?
 
     private func log(_ message: String) {
     #if canImport(Logging)
@@ -62,16 +72,25 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
             return nil
         }
 
+        let (resolvedSourceLanguageCode, resolutionReason) = resolveSourceLanguageCode(
+            requestedSourceLanguage: sourceLanguage,
+            targetLanguage: targetLanguage
+        )
         pendingRequest = PendingRequest(
             id: UUID(),
             sourceText: sourceText,
             sourceLanguage: sourceLanguage,
+            resolvedSourceLanguageCode: resolvedSourceLanguageCode,
+            sourceLanguageResolutionReason: resolutionReason,
             targetLanguage: targetLanguage,
             onDiagnosticEvent: onDiagnosticEvent
         )
         var configuration = TranslationSession.Configuration(
-            source: localeLanguage(from: sourceLanguage),
+            source: localeLanguage(from: resolvedSourceLanguageCode ?? sourceLanguage),
             target: localeLanguage(from: targetLanguage)
+        )
+        onDiagnosticEvent?(
+            "translation-framework-recovery: source-language requested=\(sourceLanguage) resolved=\(resolvedSourceLanguageCode ?? "auto") reason=\(resolutionReason.rawValue)"
         )
         configuration.invalidate()
         requestGeneration = UUID()
@@ -88,9 +107,11 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
         log("request-started")
         do {
             let availability = LanguageAvailability()
-            let status = try await availability.status(
-                for: request.sourceText,
-                to: localeLanguage(from: request.targetLanguage)
+            let targetLanguage = localeLanguage(from: request.targetLanguage)
+            let status = try await resolvePairAvailabilityStatus(
+                availability: availability,
+                request: request,
+                targetLanguage: targetLanguage
             )
             log("availability=\(describe(status))")
 
@@ -99,6 +120,7 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
                 if let missingLanguageKind = await diagnoseMissingLanguageKind(
                     sourceLanguage: request.sourceLanguage,
                     targetLanguage: request.targetLanguage,
+                    sourceText: request.sourceText,
                     using: availability
                 ) {
                     request.onDiagnosticEvent?(
@@ -118,14 +140,40 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
 
             let translated = try await translatePreservingSeparators(
                 request.sourceText,
-                using: session
+                using: session,
+                onDiagnosticEvent: request.onDiagnosticEvent
             )
+            if let resolved = normalizedLanguageIdentifier(request.resolvedSourceLanguageCode),
+               baseLanguageCode(from: resolved) != "und" {
+                lastSuccessfulSourceLanguageCode = resolved
+            }
             log("request-finished chars=\(translated.count)")
             finishPendingRequest(with: translated.isEmpty ? nil : translated)
         } catch is CancellationError {
             log("cancelled")
             finishPendingRequest(with: nil)
         } catch {
+            var failureKind = await classifyFailureKind(
+                error: error,
+                request: request
+            )
+
+            if failureKind == nil {
+                let availability = LanguageAvailability()
+                failureKind = await diagnoseMissingLanguageKind(
+                    sourceLanguage: request.sourceLanguage,
+                    targetLanguage: request.targetLanguage,
+                    sourceText: request.sourceText,
+                    using: availability
+                )
+            }
+
+            if let failureKind {
+                request.onDiagnosticEvent?(
+                    "translation-framework-recovery:failure-kind=\(failureKind.rawValue)"
+                )
+                log("failure-kind=\(failureKind.rawValue)")
+            }
             log("failed: \(error.localizedDescription)")
             finishPendingRequest(with: nil)
         }
@@ -140,7 +188,8 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
 
     private func translatePreservingSeparators(
         _ text: String,
-        using session: TranslationSession
+        using session: TranslationSession,
+        onDiagnosticEvent: (@Sendable (_ message: String) -> Void)?
     ) async throws -> String {
         let chunks = splitIntoRecoveryChunks(text)
         let textChunks = chunks.enumerated().compactMap { index, chunk -> TranslationSession.Request? in
@@ -152,6 +201,12 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
         }
 
         guard !textChunks.isEmpty else { return text }
+        if Self.verboseLoggingEnabled {
+            let sourceForLog = Self.sanitizedForLog(text) ?? "(empty)"
+            onDiagnosticEvent?(
+                "verbose tf-recovery-input chars=\(text.count) chunks=\(textChunks.count) source=\(sourceForLog)"
+            )
+        }
         nonisolated(unsafe) let detachedTextChunks = textChunks
         let responses = try await session.translations(from: detachedTextChunks)
         let translatedByIdentifier = Dictionary(
@@ -161,7 +216,7 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
             }
         )
 
-        return chunks.enumerated().map { index, chunk in
+        let reconstructed = chunks.enumerated().map { index, chunk in
             switch chunk.kind {
             case .separator:
                 return chunk.value
@@ -170,6 +225,28 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
             }
         }
         .joined()
+
+        let missingTextChunkCount = chunks.enumerated().reduce(into: 0) { count, entry in
+            let (index, chunk) = entry
+            guard chunk.kind == .text else { return }
+            if translatedByIdentifier[String(index)] == nil {
+                count += 1
+            }
+        }
+        if missingTextChunkCount > 0 {
+            onDiagnosticEvent?(
+                "translation-framework-recovery:source-fallback-inserted chunks=\(missingTextChunkCount)"
+            )
+        }
+
+        if Self.verboseLoggingEnabled {
+            let outputForLog = Self.sanitizedForLog(reconstructed) ?? "(empty)"
+            onDiagnosticEvent?(
+                "verbose tf-recovery-output chars=\(reconstructed.count) output=\(outputForLog)"
+            )
+        }
+
+        return reconstructed
     }
 
     private func splitIntoRecoveryChunks(_ text: String) -> [RecoveryChunk] {
@@ -207,6 +284,28 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
         return chunks
     }
 
+    private static func sanitizedForLog(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let compact = text.replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !compact.isEmpty else { return nil }
+
+        let limit = 1_500
+        guard compact.count > limit else { return compact }
+
+        let headCount = 1_000
+        let tailCount = 350
+        let omitted = compact.count - headCount - tailCount
+        let head = compact.prefix(headCount)
+        let tail = compact.suffix(tailCount)
+        return "\(head)...(truncated \(omitted) chars)...\(tail)"
+    }
+
+    private static var verboseLoggingEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "developerVerboseModeEnabled")
+    }
+
     private func localeLanguage(from code: String) -> Locale.Language? {
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.lowercased() != "und" else { return nil }
@@ -224,13 +323,16 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
         if normalized == "en" {
             return "en-US"
         }
-
-        if normalized == "zh" || normalized == "zh-cn" || normalized == "zh-sg" {
-            return "zh-Hans"
+        if normalized == "en-uk" {
+            return "en-GB"
         }
 
-        if normalized == "zh-tw" || normalized == "zh-hk" || normalized == "zh-mo" {
-            return "zh-Hant"
+        if normalized == "zh" || normalized == "zh-cn" || normalized == "zh-sg" || normalized == "zh-ch" || normalized == "zh-hans" {
+            return "zh-CN"
+        }
+
+        if normalized == "zh-tw" || normalized == "zh-hk" || normalized == "zh-mo" || normalized == "zh-hant" {
+            return "zh-TW"
         }
 
         return rawCode.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -252,29 +354,160 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
     private func diagnoseMissingLanguageKind(
         sourceLanguage: String,
         targetLanguage: String,
+        sourceText: String,
         using availability: LanguageAvailability
     ) async -> MissingLanguageKind? {
-        guard let source = localeLanguage(from: sourceLanguage),
-              let target = localeLanguage(from: targetLanguage) else {
-            return nil
+        let targetStatus: LanguageAvailability.Status? = if let target = localeLanguage(from: targetLanguage) {
+            await availability.status(from: target, to: nil)
+        } else {
+            nil
+        }
+        let sourceStatus: LanguageAvailability.Status? = if let source = localeLanguage(from: sourceLanguage) {
+            await availability.status(from: source, to: nil)
+        } else {
+            try? await availability.status(
+                for: sourceText,
+                to: nil
+            )
         }
 
-        let sourceStatus = await availability.status(from: source, to: nil)
-        let targetStatus = await availability.status(from: target, to: nil)
+        let sourceMissing = sourceStatus.map { $0 != .installed }
+        let targetMissing = targetStatus.map { $0 != .installed } ?? false
 
-        let sourceMissing = sourceStatus != .installed
-        let targetMissing = targetStatus != .installed
-
-        if sourceMissing && targetMissing {
+        if sourceMissing == true && targetMissing {
             return .sourceAndTarget
         }
-        if sourceMissing {
+        if sourceMissing == true {
             return .source
         }
         if targetMissing {
             return .target
         }
         return .unsupportedPair
+    }
+
+    private func classifyFailureKind(
+        error: Error,
+        request: PendingRequest
+    ) async -> MissingLanguageKind? {
+        #if canImport(Translation)
+        if TranslationError.unsupportedSourceLanguage ~= error {
+            return .source
+        }
+        if TranslationError.unsupportedTargetLanguage ~= error {
+            return .target
+        }
+        if TranslationError.unsupportedLanguagePairing ~= error {
+            let availability = LanguageAvailability()
+            return await diagnoseMissingLanguageKind(
+                sourceLanguage: request.sourceLanguage,
+                targetLanguage: request.targetLanguage,
+                sourceText: request.sourceText,
+                using: availability
+            )
+        }
+        if #available(macOS 26.0, iOS 26.0, *), TranslationError.notInstalled ~= error {
+            let availability = LanguageAvailability()
+            return await diagnoseMissingLanguageKind(
+                sourceLanguage: request.sourceLanguage,
+                targetLanguage: request.targetLanguage,
+                sourceText: request.sourceText,
+                using: availability
+            )
+        }
+        #endif
+
+        return nil
+    }
+
+    private func resolvePairAvailabilityStatus(
+        availability: LanguageAvailability,
+        request: PendingRequest,
+        targetLanguage: Locale.Language?
+    ) async throws -> LanguageAvailability.Status {
+        let effectiveSourceLanguageCode = request.resolvedSourceLanguageCode ?? request.sourceLanguage
+        if let sourceLanguage = localeLanguage(from: effectiveSourceLanguageCode) {
+            let status = await availability.status(
+                from: sourceLanguage,
+                to: targetLanguage
+            )
+            request.onDiagnosticEvent?(
+                "translation-framework-recovery: availability-check=from source=\(effectiveSourceLanguageCode) target=\(request.targetLanguage) status=\(describe(status))"
+            )
+            return status
+        }
+
+        let status = try await availability.status(
+            for: request.sourceText,
+            to: targetLanguage
+        )
+        request.onDiagnosticEvent?(
+            "translation-framework-recovery: availability-check=from-text source=\(request.sourceLanguage) target=\(request.targetLanguage) status=\(describe(status))"
+        )
+        return status
+    }
+
+    private func resolveSourceLanguageCode(
+        requestedSourceLanguage: String,
+        targetLanguage: String
+    ) -> (String?, SourceLanguageResolutionReason) {
+        if let requested = normalizedLanguageIdentifier(requestedSourceLanguage),
+           baseLanguageCode(from: requested) != "und" {
+            return (alignedGenericSourceLanguageCode(requested, forTargetLanguage: targetLanguage), .requested)
+        }
+
+        // Keep explicit auto-source requests as auto when no prior successful language exists.
+        // This avoids over-constraining pairs such as zh-Hans <-> zh-Hant where fixed source
+        // variants can be rejected but auto source detection may still work.
+        if let previous = normalizedLanguageIdentifier(lastSuccessfulSourceLanguageCode),
+           baseLanguageCode(from: previous) != "und" {
+            return (alignedGenericSourceLanguageCode(previous, forTargetLanguage: targetLanguage), .fallbackPreviousSuccess)
+        }
+
+        return (nil, .undetermined)
+    }
+
+    private func normalizedLanguageIdentifier(_ code: String?) -> String? {
+        guard let code else { return nil }
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed.replacingOccurrences(of: "_", with: "-")
+    }
+
+    private func baseLanguageCode(from identifier: String) -> String {
+        identifier.split(separator: "-").first.map(String.init) ?? identifier
+    }
+
+    private func alignedGenericSourceLanguageCode(_ sourceLanguage: String, forTargetLanguage targetLanguage: String) -> String {
+        let source = sourceLanguage.lowercased()
+        let target = canonicalTranslationFrameworkLanguageIdentifier(from: targetLanguage).lowercased()
+
+        if source == "en" {
+            if target == "en-gb" || target == "en-uk" {
+                return "en-US"
+            }
+            if target == "en-us" {
+                return "en-GB"
+            }
+            return "en-US"
+        }
+
+        if baseLanguageCode(from: source) == "zh" {
+            if target == "zh-tw" {
+                return "zh-CN"
+            }
+            if target == "zh-cn" || target == "zh-ch" {
+                return "zh-TW"
+            }
+            // Keep explicit Chinese variants when target does not indicate script preference.
+            let sourceCanonical = canonicalTranslationFrameworkLanguageIdentifier(from: sourceLanguage)
+            if sourceCanonical.lowercased() == "zh-cn" || sourceCanonical.lowercased() == "zh-tw" {
+                return sourceCanonical
+            }
+            return "zh-CN"
+        }
+
+        return sourceLanguage
     }
 }
 #endif

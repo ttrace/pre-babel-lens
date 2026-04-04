@@ -127,6 +127,21 @@ struct TranslationViewModelURLHandlingTests {
         #expect(await counter.current() == 0)
     }
 
+    @Test
+    func handleIncomingURLNormalizesCRLFLineEndings() async throws {
+        let counter = TranslationCallCounter()
+        let viewModel = await makeViewModel(counter: counter)
+        let url = try #require(URL(string: "prebabellens://translate?text=Line1%0D%0ALine2%0DLine3"))
+
+        await viewModel.handleIncomingURL(url)
+
+        await MainActor.run {
+            #expect(viewModel.inputText == "Line1\nLine2\nLine3")
+            #expect(viewModel.translatedText.contains("Line1\nLine2\nLine3"))
+        }
+        #expect(await counter.current() == 1)
+    }
+
     @MainActor
     private func makeViewModel(counter: TranslationCallCounter) -> TranslationViewModel {
         let engine = CountingTranslationEngine(counter: counter)

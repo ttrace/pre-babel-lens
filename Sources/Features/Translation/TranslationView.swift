@@ -1,10 +1,11 @@
 import SwiftUI
-#if canImport(UniformTypeIdentifiers)
-    import UniformTypeIdentifiers
-#endif
 
 #if os(macOS)
     import AppKit
+    import CoreServices
+    #if canImport(PDFKit)
+        import PDFKit
+    #endif
 #endif
 #if canImport(Translation)
     import Translation
@@ -32,9 +33,6 @@ struct TranslationView: View {
     @State private var toastDismissTask: Task<Void, Never>?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    #if os(macOS)
-    @State private var isSourceDropTargeted: Bool = false
-    #endif
     #if os(iOS)
     @FocusState private var focusedField: FocusedField?
     #endif
@@ -245,43 +243,19 @@ struct TranslationView: View {
             Text("No target languages")
                 .foregroundStyle(.secondary)
         } else {
-            Picker("Target", selection: $viewModel.targetLanguage) {
-                ForEach(viewModel.targetLanguageOptions) { option in
-                    Text(option.menuLabel(showCode: developerModeEnabled)).tag(option.code)
-                }
-            }
-            .pickerStyle(.menu)
-        }
-    }
-
-    @ViewBuilder
-    private var iOSLanguageMenu: some View {
-        if viewModel.targetLanguageOptions.isEmpty {
-            Text("No target")
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        } else {
+            #if os(macOS)
             Menu {
-                if viewModel.isAppleIntelligenceAvailable {
-                    Button(
-                        viewModel.usesAppleIntelligenceTranslation
-                            ? "標準翻訳に戻す"
-                            : "AI翻訳に切り替え"
-                    ) {
-                        if viewModel.usesAppleIntelligenceTranslation {
-                            viewModel.switchToStandardTranslation()
-                        } else {
-                            viewModel.switchToAppleIntelligenceTranslation()
-                        }
-                    }
-                } else {
-                    Button("AI翻訳はこのデバイスで利用できません") { }
-                        .disabled(true)
-                }
+                translationModeToggleMenuItem
                 Divider()
                 ForEach(viewModel.targetLanguageOptions) { option in
-                    Button(option.menuLabel(showCode: developerModeEnabled)) {
+                    Button {
                         viewModel.targetLanguage = option.code
+                    } label: {
+                        if option.code == viewModel.targetLanguage {
+                            Label(option.menuLabel(showCode: developerModeEnabled), systemImage: "checkmark")
+                        } else {
+                            Text(option.menuLabel(showCode: developerModeEnabled))
+                        }
                     }
                 }
             } label: {
@@ -294,6 +268,68 @@ struct TranslationView: View {
                 }
             }
             .fixedSize(horizontal: true, vertical: false)
+            #else
+            Picker("Target", selection: $viewModel.targetLanguage) {
+                ForEach(viewModel.targetLanguageOptions) { option in
+                    Text(option.menuLabel(showCode: developerModeEnabled)).tag(option.code)
+                }
+            }
+            .pickerStyle(.menu)
+            #endif
+        }
+    }
+
+    @ViewBuilder
+    private var iOSLanguageMenu: some View {
+        if viewModel.targetLanguageOptions.isEmpty {
+            Text("No target")
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        } else {
+            Menu {
+                translationModeToggleMenuItem
+                Divider()
+                ForEach(viewModel.targetLanguageOptions) { option in
+                    Button {
+                        viewModel.targetLanguage = option.code
+                    } label: {
+                        if option.code == viewModel.targetLanguage {
+                            Label(option.menuLabel(showCode: developerModeEnabled), systemImage: "checkmark")
+                        } else {
+                            Text(option.menuLabel(showCode: developerModeEnabled))
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(currentTargetLanguageLabel)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    @ViewBuilder
+    private var translationModeToggleMenuItem: some View {
+        if viewModel.isAppleIntelligenceAvailable {
+            Button(
+                viewModel.usesAppleIntelligenceTranslation
+                    ? "機械翻訳に切り替え"
+                    : "AI翻訳に切り替え"
+            ) {
+                if viewModel.usesAppleIntelligenceTranslation {
+                    viewModel.switchToStandardTranslation()
+                } else {
+                    viewModel.switchToAppleIntelligenceTranslation()
+                }
+            }
+        } else {
+            Button("AI翻訳はこのデバイスで利用できません") { }
+                .disabled(true)
         }
     }
 
@@ -392,40 +428,7 @@ struct TranslationView: View {
                 .buttonStyle(.bordered)
             }
 
-            TextEditor(text: $viewModel.inputText)
-                #if os(iOS)
-                .focused($focusedField, equals: .source)
-                .scrollDismissesKeyboard(.interactively)
-                #endif
-                .scrollContentBackground(.hidden)
-                #if os(iOS)
-                .frame(maxHeight: .infinity, alignment: .top)
-                #else
-                .frame(minHeight: editorMinHeight, maxHeight: .infinity, alignment: .top)
-                #endif
-                .padding(8)
-                .font(.body)
-                #if os(iOS)
-                .background(colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30))
-                .overlay(
-                    RoundedRectangle(cornerRadius: editorCornerRadius)
-                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-                )
-                #else
-                .background(
-                    colorScheme == .dark ? Color.black.opacity(0.3) : Color.white.opacity(0.4),
-                    in: RoundedRectangle(cornerRadius: editorCornerRadius)
-                )
-                .onDrop(of: sourceDropTypeIdentifiers, isTargeted: $isSourceDropTargeted, perform: handleSourceDrop)
-                .overlay(
-                    RoundedRectangle(cornerRadius: editorCornerRadius)
-                        .strokeBorder(
-                            Color.accentColor.opacity(isSourceDropTargeted ? 0.75 : 0.0),
-                            style: StrokeStyle(lineWidth: 2, dash: [6, 4])
-                        )
-                )
-                #endif
-
+            sourceEditor
         }
         .padding(cardOuterPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -436,6 +439,37 @@ struct TranslationView: View {
             colorScheme == .dark ? Color.black.opacity(0.5) : Color.white.opacity(0.7),
             in: RoundedRectangle(cornerRadius: cardCornerRadius)
         )
+        #endif
+    }
+
+    @ViewBuilder
+    private var sourceEditor: some View {
+        #if os(iOS)
+        TextEditor(text: $viewModel.inputText)
+            .focused($focusedField, equals: .source)
+            .scrollDismissesKeyboard(.interactively)
+            .scrollContentBackground(.hidden)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .padding(8)
+            .font(.body)
+            .background(colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30))
+            .overlay(
+                RoundedRectangle(cornerRadius: editorCornerRadius)
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            )
+        #else
+        MacSourceTextEditor(text: $viewModel.inputText)
+            .frame(minHeight: editorMinHeight, maxHeight: .infinity, alignment: .top)
+            .padding(8)
+            .font(.body)
+            .background(
+                colorScheme == .dark ? Color.black.opacity(0.3) : Color.white.opacity(0.4),
+                in: RoundedRectangle(cornerRadius: editorCornerRadius)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: editorCornerRadius)
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            )
         #endif
     }
 
@@ -669,6 +703,9 @@ struct TranslationView: View {
                     .font(.system(size: 14, weight: .medium, design: .rounded))
                     .foregroundStyle(Color(red: 0.20, green: 0.35, blue: 0.30))
                     .lineLimit(1)
+                ForEach(viewModel.statusNotices) { notice in
+                    statusNoticeLegendRow(notice)
+                }
                 Spacer(minLength: 0)
                 if viewModel.isTranslating {
                     Button {
@@ -679,6 +716,43 @@ struct TranslationView: View {
                     .buttonStyle(.bordered)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func statusNoticeLegendRow(_ notice: TranslationViewModel.StatusNotice) -> some View {
+        HStack(spacing: 6) {
+            Text(notice.markerText)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(noticeForegroundColor(for: notice.style))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    noticeBackgroundColor(for: notice.style),
+                    in: Capsule()
+                )
+            Text(notice.text)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    private func noticeBackgroundColor(for style: TranslationViewModel.StatusNotice.Style) -> Color {
+        switch style {
+        case .orange:
+            return Color.orange.opacity(colorScheme == .dark ? 0.58 : 0.32)
+        case .blue:
+            return Color.blue.opacity(colorScheme == .dark ? 0.58 : 0.28)
+        }
+    }
+
+    private func noticeForegroundColor(for style: TranslationViewModel.StatusNotice.Style) -> Color {
+        switch style {
+        case .orange, .blue:
+            return colorScheme == .dark
+                ? Color.white.opacity(0.95)
+                : Color.black.opacity(0.82)
         }
     }
 
@@ -715,42 +789,6 @@ struct TranslationView: View {
     // #endregion
 
     #if os(macOS)
-    private var sourceDropTypeIdentifiers: [String] {
-        [
-            UTType.plainText.identifier,
-            UTType.utf8PlainText.identifier,
-            UTType.utf16PlainText.identifier,
-            UTType.fileURL.identifier,
-        ]
-    }
-
-    private func handleSourceDrop(providers: [NSItemProvider]) -> Bool {
-        if let textProvider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) {
-            textProvider.loadObject(ofClass: NSString.self) { droppedObject, _ in
-                guard let droppedText = droppedObject as? NSString else { return }
-                let text = String(droppedText)
-                Task { @MainActor in
-                    guard !text.isEmpty else { return }
-                    viewModel.inputText = text
-                }
-            }
-            return true
-        }
-
-        guard let fileProvider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
-            return false
-        }
-
-        fileProvider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-            guard let fileURL = SourceDropImport.fileURL(from: item) else { return }
-            guard let text = SourceDropImport.loadText(from: fileURL) else { return }
-            Task { @MainActor in
-                guard !text.isEmpty else { return }
-                viewModel.inputText = text
-            }
-        }
-        return true
-    }
     #endif
 
     #if os(iOS)
@@ -833,16 +871,125 @@ private struct TranslationUnsafeRecoveryTaskHost: View {
 #endif
 
 #if os(macOS)
+private struct MacSourceTextEditor: NSViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+
+        let textView = DropAwareTextView(frame: .zero)
+        textView.delegate = context.coordinator
+        textView.string = text
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticDataDetectionEnabled = false
+        textView.font = NSFont.preferredFont(forTextStyle: .body)
+        textView.backgroundColor = NSColor.clear
+        textView.textContainerInset = NSSize(width: 0, height: 6)
+        textView.onDropResolvedText = { droppedText in
+            context.coordinator.updateTextFromDrop(droppedText)
+        }
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context _: Context) {
+        guard let textView = nsView.documentView as? DropAwareTextView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        @Binding private var text: String
+
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            text = textView.string
+        }
+
+        func updateTextFromDrop(_ droppedText: String) {
+            guard !droppedText.isEmpty else { return }
+            text = droppedText
+        }
+    }
+}
+
+private final class DropAwareTextView: NSTextView {
+    var onDropResolvedText: ((String) -> Void)?
+
+    override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
+        super.init(frame: frameRect, textContainer: container)
+        commonInit()
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        commonInit()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        commonInit()
+    }
+
+    private func commonInit() {
+        registerForDraggedTypes([.fileURL, .string])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        SourceDropImport.resolveText(from: sender.draggingPasteboard) == nil ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let droppedText = SourceDropImport.resolveText(from: sender.draggingPasteboard) else {
+            return false
+        }
+        onDropResolvedText?(droppedText)
+        return true
+    }
+}
+
 private enum SourceDropImport {
-    static func fileURL(from item: NSSecureCoding?) -> URL? {
-        if let url = item as? URL {
-            return url
+    static func resolveText(from pasteboard: NSPasteboard) -> String? {
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            for url in urls {
+                if let text = loadText(from: url), !text.isEmpty {
+                    return text
+                }
+            }
         }
-        if let data = item as? Data {
-            return URL(dataRepresentation: data, relativeTo: nil)
-        }
-        if let string = item as? String {
-            return URL(string: string)
+
+        if let strings = pasteboard.readObjects(forClasses: [NSString.self], options: nil) as? [String] {
+            for value in strings {
+                if let fileURL = fileURL(fromDroppedText: value),
+                   let text = loadText(from: fileURL),
+                   !text.isEmpty {
+                    return text
+                }
+            }
+            for value in strings {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    return value
+                }
+            }
         }
         return nil
     }
@@ -855,11 +1002,179 @@ private enum SourceDropImport {
             }
         }
 
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            return nil
+        }
+
         var encoding: UInt = 0
         if let text = try? NSString(contentsOf: fileURL, usedEncoding: &encoding) {
-            return text as String
+            let resolved = (text as String).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !resolved.isEmpty {
+                return text as String
+            }
+        }
+
+        let lowercasedExtension = fileURL.pathExtension.lowercased()
+
+        if lowercasedExtension == "pdf", let extracted = extractTextFromPDF(fileURL), !extracted.isEmpty {
+            return extracted
+        }
+
+        if ["doc", "docx", "pages"].contains(lowercasedExtension),
+           let extracted = extractTextWithAttributedString(from: fileURL),
+           !extracted.isEmpty {
+            return extracted
+        }
+
+        if let extracted = extractTextWithMetadataImporter(from: fileURL), !extracted.isEmpty {
+            return extracted
+        }
+
+        return nil
+    }
+
+    private static func extractTextWithAttributedString(from fileURL: URL) -> String? {
+        if let attributed = try? NSAttributedString(
+            url: fileURL,
+            options: [:],
+            documentAttributes: nil
+        ) {
+            let text = attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                return text
+            }
         }
         return nil
+    }
+
+    private static func extractTextWithMetadataImporter(from fileURL: URL) -> String? {
+        guard let item = MDItemCreateWithURL(kCFAllocatorDefault, fileURL as CFURL) else {
+            return nil
+        }
+        guard let attributes = MDItemCopyAttributes(item, [kMDItemTextContent as CFString] as CFArray) as? [String: Any] else {
+            return nil
+        }
+        guard let text = attributes[kMDItemTextContent as String] as? String else {
+            return nil
+        }
+        let trimmed = text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : text
+    }
+
+    private static func extractTextFromPDF(_ fileURL: URL) -> String? {
+        #if canImport(PDFKit)
+        guard let document = PDFDocument(url: fileURL) else { return nil }
+
+        var pages: [String] = []
+        pages.reserveCapacity(document.pageCount)
+
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+            let text = (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                pages.append(normalizePDFSoftLineBreaks(text))
+            }
+        }
+
+        let combined = pages.joined(separator: "\n\n")
+        return combined.isEmpty ? nil : combined
+        #else
+        return nil
+        #endif
+    }
+
+    private static func normalizePDFSoftLineBreaks(_ text: String) -> String {
+        let lines = text.components(separatedBy: .newlines)
+        guard !lines.isEmpty else { return text }
+
+        var resultLines: [String] = []
+        resultLines.reserveCapacity(lines.count)
+        var keepLineBreakBeforeNext = true
+
+        for rawLine in lines {
+            let trimmedLine = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if trimmedLine.isEmpty {
+                if !resultLines.isEmpty, resultLines.last != "" {
+                    resultLines.append("")
+                }
+                keepLineBreakBeforeNext = true
+                continue
+            }
+
+            guard var last = resultLines.last, !last.isEmpty else {
+                resultLines.append(trimmedLine)
+                keepLineBreakBeforeNext = shouldKeepLineBreak(afterRawLine: rawLine)
+                continue
+            }
+
+            if keepLineBreakBeforeNext {
+                resultLines.append(trimmedLine)
+                keepLineBreakBeforeNext = shouldKeepLineBreak(afterRawLine: rawLine)
+                continue
+            }
+
+            last += " " + trimmedLine
+            resultLines[resultLines.count - 1] = last
+            keepLineBreakBeforeNext = shouldKeepLineBreak(afterRawLine: rawLine)
+        }
+
+        return resultLines.joined(separator: "\n")
+    }
+
+    private static func shouldKeepLineBreak(afterRawLine rawLine: String) -> Bool {
+        // Keep the line break only when the line ends with one of:
+        // . 。 ？
+        // followed by optional trailing spaces before the newline.
+        rawLine.range(of: #"[.。？]\s*$"#, options: .regularExpression) != nil
+    }
+
+    static func fileURL(fromDroppedText text: String) -> URL? {
+        let lines = text
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        for line in lines {
+            if let resolved = resolveDroppedPathCandidate(line) {
+                return resolved
+            }
+        }
+        return nil
+    }
+
+    private static func resolveDroppedPathCandidate(_ raw: String) -> URL? {
+        let unwrapped = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"'<>"))
+        let unquoted = unescapeShellPath(unwrapped)
+        guard !unquoted.isEmpty else { return nil }
+
+        if unquoted.hasPrefix("file://"), let url = URL(string: unquoted) {
+            return url
+        }
+
+        let expanded = NSString(string: unquoted).expandingTildeInPath
+        let standardized = NSString(string: expanded).standardizingPath
+        let candidates = [expanded, expanded.removingPercentEncoding ?? expanded]
+        let standardizedCandidates = [standardized, standardized.removingPercentEncoding ?? standardized]
+
+        for candidate in candidates + standardizedCandidates {
+            if FileManager.default.fileExists(atPath: candidate) {
+                return URL(fileURLWithPath: candidate)
+            }
+        }
+        return nil
+    }
+
+    private static func unescapeShellPath(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\\ ", with: " ")
+            .replacingOccurrences(of: "\\(", with: "(")
+            .replacingOccurrences(of: "\\)", with: ")")
+            .replacingOccurrences(of: "\\[", with: "[")
+            .replacingOccurrences(of: "\\]", with: "]")
+            .replacingOccurrences(of: "\\&", with: "&")
+            .replacingOccurrences(of: "\\'", with: "'")
     }
 }
 #endif
