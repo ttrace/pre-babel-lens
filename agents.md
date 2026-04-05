@@ -18,6 +18,7 @@ Current product direction:
   - iOS default runtime: Apple Translation framework (TF)
   - iOS enhancement path: Foundation Models (FM) only on FM-capable devices
   - macOS path: continue backend-swappable design (FM / Core ML evolution)
+- Current iOS deployment target scope: all iOS 26 devices that support Apple Translation framework (TF)
 
 ## Strategic Direction
 - Keep iOS startup and baseline translation stable by defaulting to TF.
