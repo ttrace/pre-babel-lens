@@ -108,11 +108,28 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
         do {
             let availability = LanguageAvailability()
             let targetLanguage = localeLanguage(from: request.targetLanguage)
-            let status = try await resolvePairAvailabilityStatus(
-                availability: availability,
-                request: request,
-                targetLanguage: targetLanguage
-            )
+            let status: LanguageAvailability.Status
+            do {
+                status = try await resolvePairAvailabilityStatus(
+                    availability: availability,
+                    request: request,
+                    targetLanguage: targetLanguage
+                )
+            } catch {
+                if isTranslationServiceConnectionError(error) {
+                    request.onDiagnosticEvent?(
+                        "translation-framework-recovery: transient-service-connection-error stage=availability retry=1"
+                    )
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    status = try await resolvePairAvailabilityStatus(
+                        availability: availability,
+                        request: request,
+                        targetLanguage: targetLanguage
+                    )
+                } else {
+                    throw error
+                }
+            }
             log("availability=\(describe(status))")
 
             if status == .unsupported {
@@ -132,17 +149,41 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
                 return
             }
 
-            if status == .supported {
-                log("preparing-download-or-consent")
-                try await session.prepareTranslation()
-                log("prepare-finished")
-            }
+            let translated: String
+            do {
+                if status == .supported {
+                    log("preparing-download-or-consent")
+                    try await session.prepareTranslation()
+                    log("prepare-finished")
+                }
 
-            let translated = try await translatePreservingSeparators(
-                request.sourceText,
-                using: session,
-                onDiagnosticEvent: request.onDiagnosticEvent
-            )
+                translated = try await translatePreservingSeparators(
+                    request.sourceText,
+                    using: session,
+                    onDiagnosticEvent: request.onDiagnosticEvent
+                )
+            } catch {
+                if isTranslationServiceConnectionError(error) {
+                    request.onDiagnosticEvent?(
+                        "translation-framework-recovery: transient-service-connection-error stage=translate retry=1"
+                    )
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+
+                    if status == .supported {
+                        log("preparing-download-or-consent(retry)")
+                        try await session.prepareTranslation()
+                        log("prepare-finished(retry)")
+                    }
+
+                    translated = try await translatePreservingSeparators(
+                        request.sourceText,
+                        using: session,
+                        onDiagnosticEvent: request.onDiagnosticEvent
+                    )
+                } else {
+                    throw error
+                }
+            }
             if let resolved = normalizedLanguageIdentifier(request.resolvedSourceLanguageCode),
                baseLanguageCode(from: resolved) != "und" {
                 lastSuccessfulSourceLanguageCode = resolved
@@ -418,6 +459,19 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
         #endif
 
         return nil
+    }
+
+    private func isTranslationServiceConnectionError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain, nsError.code == 4097 {
+            return true
+        }
+
+        let debugDescription = (nsError.userInfo[NSDebugDescriptionErrorKey] as? String) ?? ""
+        let message = "\(debugDescription) \(nsError.localizedDescription)".lowercased()
+        return message.contains("com.apple.translation.text")
+            || message.contains("connection to service")
+            || message.contains("translationd")
     }
 
     private func resolvePairAvailabilityStatus(

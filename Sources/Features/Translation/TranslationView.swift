@@ -182,27 +182,36 @@ struct TranslationView: View {
             let contentTopPadding: CGFloat = 8
             let contentBottomPadding: CGFloat = 2
             let verticalGap: CGFloat = 14
+            let desktopColumnGap: CGFloat = 9
+            let contentHorizontalPadding: CGFloat = usesDesktopLikeIOSLayout ? 36 : 12
+            let compactStatusBottomMargin: CGFloat = contentHorizontalPadding / 2
             let availableHeight = max(0, proxy.size.height - contentTopPadding - contentBottomPadding)
-            let splitHeight = max(140, (availableHeight - verticalGap) / 2)
+            let splitHeight = max(
+                140,
+                (availableHeight - verticalGap - outputStatusReservedHeight - compactStatusBottomMargin) / 2
+            )
 
             VStack(alignment: .leading, spacing: 14) {
                 if usesDesktopLikeIOSLayout {
-                    HStack(alignment: .top, spacing: 18) {
+                    HStack(alignment: .top, spacing: desktopColumnGap) {
                         sourceCard
-                        outputCard
+                        outputColumnWithStatus()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.bottom, desktopColumnGap)
                 } else if isWideIOSLayout && !isPortrait {
                     HStack(alignment: .top, spacing: 14) {
                         sourceCard
-                        outputCard
+                        outputColumnWithStatus()
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 } else {
                     VStack(alignment: .leading, spacing: verticalGap) {
                         sourceCard
                             .frame(height: splitHeight)
-                        outputCard
-                            .frame(height: splitHeight)
+                        outputColumnWithStatus(contentHeight: splitHeight)
+                            .frame(height: splitHeight + outputStatusReservedHeight)
+                            .padding(.bottom, compactStatusBottomMargin)
                     }
                 }
 
@@ -211,7 +220,7 @@ struct TranslationView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(.horizontal, usesDesktopLikeIOSLayout ? 36 : 12)
+            .padding(.horizontal, contentHorizontalPadding)
             .padding(.top, contentTopPadding)
             .padding(.bottom, contentBottomPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -230,11 +239,17 @@ struct TranslationView: View {
             let contentBottomPadding: CGFloat = 2
             let verticalGap: CGFloat = 14
             let headerReservedHeight: CGFloat = 64
+            let desktopColumnGap: CGFloat = 18
+            let contentHorizontalPadding: CGFloat = isCompactDesktopLayout ? 12 : 36
+            let compactStatusBottomMargin: CGFloat = contentHorizontalPadding
             let availableHeight = max(
                 0,
                 proxy.size.height - contentTopPadding - contentBottomPadding - headerReservedHeight
             )
-            let splitHeight = max(170, (availableHeight - verticalGap) / 2)
+            let splitHeight = max(
+                170,
+                (availableHeight - verticalGap - outputStatusReservedHeight - compactStatusBottomMargin) / 2
+            )
 
             VStack(alignment: .leading, spacing: isCompactDesktopLayout ? 14 : 18) {
                 desktopHeader
@@ -243,15 +258,17 @@ struct TranslationView: View {
                     VStack(alignment: .leading, spacing: verticalGap) {
                         sourceCard
                             .frame(height: splitHeight)
-                        outputCard
-                            .frame(height: splitHeight)
+                        outputColumnWithStatus(contentHeight: splitHeight)
+                            .frame(height: splitHeight + outputStatusReservedHeight)
+                            .padding(.bottom, compactStatusBottomMargin)
                     }
                 } else {
-                    HStack(alignment: .top, spacing: 18) {
+                    HStack(alignment: .top, spacing: desktopColumnGap) {
                         sourceCard
-                        outputCard
+                        outputColumnWithStatus()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.bottom, desktopColumnGap)
                 }
 
                 if developerModeEnabled {
@@ -259,7 +276,7 @@ struct TranslationView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(.horizontal, isCompactDesktopLayout ? 12 : 36)
+            .padding(.horizontal, contentHorizontalPadding)
             .padding(.top, contentTopPadding)
             .padding(.bottom, isCompactDesktopLayout ? compactLayoutBottomMargin : contentBottomPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -558,6 +575,7 @@ struct TranslationView: View {
             .scrollDismissesKeyboard(.interactively)
             .scrollContentBackground(.hidden)
             .frame(maxHeight: .infinity, alignment: .top)
+            .simultaneousGesture(editorPinchGesture(host: .source), including: .gesture)
             .padding(layoutTokens.editorInnerPadding)
             .font(.system(size: editorFontPointSize))
             .background(colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30))
@@ -568,7 +586,6 @@ struct TranslationView: View {
             .overlay(alignment: .top) {
                 pinchOverlay(host: .source)
             }
-            .simultaneousGesture(editorPinchGesture(host: .source))
         #else
         MacSourceTextEditor(text: $viewModel.inputText, fontSize: editorFontPointSize)
             .frame(minHeight: editorMinHeight, maxHeight: .infinity, alignment: .top)
@@ -585,7 +602,7 @@ struct TranslationView: View {
         #endif
     }
 
-    private var outputCard: some View {
+    private var outputContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Output")
@@ -617,41 +634,25 @@ struct TranslationView: View {
                 .disabled(viewModel.isTranslating || viewModel.targetLanguageOptions.isEmpty)
             }
 
-            ZStack(alignment: .bottomLeading) {
-                ScrollView {
-                    Group {
-                        if viewModel.translatedText.isEmpty {
-                            Color.clear
-                                .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
-                        } else {
-                            Text(styledOutputText)
-                                .font(.system(size: editorFontPointSize))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
+            ScrollView {
+                Group {
+                    if viewModel.translatedText.isEmpty {
+                        Color.clear
+                            .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
+                    } else {
+                        Text(styledOutputText)
+                            .font(.system(size: editorFontPointSize))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(.top, 12)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12 + outputStatusReservedHeight)
                 }
-
-                LinearGradient(
-                    colors: [
-                        outputStatusGradientTopColor,
-                        outputStatusBackgroundColor,
-                    ],
-                    startPoint: UnitPoint(x:0.0, y: 0.0),
-                    endPoint: UnitPoint(x:0.0, y: 0.75)
-                )
-                .frame(maxWidth: .infinity, minHeight: outputStatusBackgroundHeight, maxHeight: outputStatusBackgroundHeight, alignment: .bottom)
-                .allowsHitTesting(false)
-
-                outputStatusOverlay
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
+                .padding(.top, 12)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
             }
             #if os(iOS)
             .frame(maxHeight: .infinity, alignment: .top)
+            .simultaneousGesture(editorPinchGesture(host: .output), including: .gesture)
             #else
             .frame(minHeight: editorMinHeight, maxHeight: .infinity, alignment: .top)
             #endif
@@ -665,13 +666,26 @@ struct TranslationView: View {
             .overlay(alignment: .top) {
                 pinchOverlay(host: .output)
             }
-            .simultaneousGesture(editorPinchGesture(host: .output))
             #else
             .background(
                 colorScheme == .dark ? Color.black.opacity(0.3) : Color.white.opacity(0.4),
                 in: RoundedRectangle(cornerRadius: editorCornerRadius)
             )
             #endif
+        }
+    }
+
+    @ViewBuilder
+    private func outputColumnWithStatus(contentHeight: CGFloat? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let contentHeight {
+                outputContent
+                    .frame(height: contentHeight, alignment: .top)
+            } else {
+                outputContent
+                    .frame(maxHeight: .infinity, alignment: .top)
+            }
+            outputStatusPanel
         }
         .padding(cardOuterPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -762,7 +776,12 @@ struct TranslationView: View {
     }
 
     private var cardOuterPadding: CGFloat {
-        layoutTokens.cardOuterPadding
+        #if os(iOS)
+        if isIOSDesktopLayoutActive {
+            return layoutTokens.cardOuterPadding / 2
+        }
+        #endif
+        return layoutTokens.cardOuterPadding
     }
 
     private var cardCornerRadius: CGFloat {
@@ -770,7 +789,12 @@ struct TranslationView: View {
     }
 
     private var editorCornerRadius: CGFloat {
-        layoutTokens.editorCornerRadius
+        #if os(iOS)
+        if isIOSDesktopLayoutActive {
+            return 0
+        }
+        #endif
+        return layoutTokens.editorCornerRadius
     }
 
     private var editorMinHeight: CGFloat {
@@ -800,24 +824,22 @@ struct TranslationView: View {
     // #endregion
 
     private var outputStatusReservedHeight: CGFloat { layoutTokens.outputStatusReservedHeight }
-    private var outputStatusBackgroundHeight: CGFloat { layoutTokens.outputStatusBackgroundHeight }
 
-    private var outputStatusBackgroundColor: Color {
-        outputEditorBackgroundColor
-    }
-
-    private var outputStatusGradientTopColor: Color {
-        outputEditorBackgroundColor.opacity(0.0)
-    }
-
-    private var outputEditorBackgroundColor: Color {
-        if colorScheme == .dark {
-            return Color(red: 68.0 / 255.0, green: 71.0 / 255.0, blue: 79.0 / 255.0)
+    @ViewBuilder
+    private var outputStatusPanel: some View {
+        HStack(spacing: 0) {
+            outputStatusOverlay
+            Spacer(minLength: 0)
         }
-        if usesIOSLikeFieldStyle {
-        return Color(red: 247.0 / 255.0, green: 238.0 / 255.0, blue: 225.0 / 255.0)
-        } else {
-        return Color(red: 253.0 / 255.0, green: 251.0 / 255.0, blue: 247.0 / 255.0)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: outputStatusReservedHeight, maxHeight: outputStatusReservedHeight, alignment: .leading)
+        .background(
+            colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30)
+        )
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 1)
         }
     }
 
@@ -1105,7 +1127,6 @@ private extension TranslationView {
         var editorCornerRadius: CGFloat
         var editorMinHeight: CGFloat
         var outputStatusReservedHeight: CGFloat
-        var outputStatusBackgroundHeight: CGFloat
 
         static let iosLike = LayoutTokens(
             sectionTitleFontSize: 18,
@@ -1115,8 +1136,7 @@ private extension TranslationView {
             cardCornerRadius: 0,
             editorCornerRadius: 0,
             editorMinHeight: 170,
-            outputStatusReservedHeight: 46,
-            outputStatusBackgroundHeight: 84
+            outputStatusReservedHeight: 22
         )
 
         static let desktop = LayoutTokens(
@@ -1127,8 +1147,7 @@ private extension TranslationView {
             cardCornerRadius: 26,
             editorCornerRadius: 18,
             editorMinHeight: 300,
-            outputStatusReservedHeight: 46,
-            outputStatusBackgroundHeight: 84
+            outputStatusReservedHeight: 22
         )
     }
 }
