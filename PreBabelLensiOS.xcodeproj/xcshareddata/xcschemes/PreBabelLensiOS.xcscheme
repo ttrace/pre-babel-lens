@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "T00000000000000000000001"
-               BuildableName = "PreBabelLensiOS.app"
+               BuildableName = "PreBabelLens.app"
                BlueprintName = "PreBabelLensiOS"
                ReferencedContainer = "container:PreBabelLensiOS.xcodeproj">
             </BuildableReference>
@@ -45,7 +45,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "T00000000000000000000001"
-            BuildableName = "PreBabelLensiOS.app"
+            BuildableName = "PreBabelLens.app"
             BlueprintName = "PreBabelLensiOS"
             ReferencedContainer = "container:PreBabelLensiOS.xcodeproj">
          </BuildableReference>
@@ -62,7 +62,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "T00000000000000000000001"
-            BuildableName = "PreBabelLensiOS.app"
+            BuildableName = "PreBabelLens.app"
             BlueprintName = "PreBabelLensiOS"
             ReferencedContainer = "container:PreBabelLensiOS.xcodeproj">
          </BuildableReference>
