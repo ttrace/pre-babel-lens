@@ -568,7 +568,7 @@ struct TranslationView: View {
             .overlay(alignment: .top) {
                 pinchOverlay(host: .source)
             }
-            .simultaneousGesture(editorPinchGesture(host: .source))
+            .simultaneousGesture(editorPinchGesture(host: .source), including: .gesture)
         #else
         MacSourceTextEditor(text: $viewModel.inputText, fontSize: editorFontPointSize)
             .frame(minHeight: editorMinHeight, maxHeight: .infinity, alignment: .top)
@@ -665,7 +665,7 @@ struct TranslationView: View {
             .overlay(alignment: .top) {
                 pinchOverlay(host: .output)
             }
-            .simultaneousGesture(editorPinchGesture(host: .output))
+            .simultaneousGesture(editorPinchGesture(host: .output), including: .gesture)
             #else
             .background(
                 colorScheme == .dark ? Color.black.opacity(0.3) : Color.white.opacity(0.4),
