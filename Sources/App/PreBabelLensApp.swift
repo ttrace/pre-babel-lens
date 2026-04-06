@@ -152,6 +152,7 @@ struct PreBabelLens: App {
 #if os(macOS)
 private struct TranslationMenuCommands: Commands {
     @ObservedObject var viewModel: TranslationViewModel
+    @AppStorage("editorFontScaleLevel") private var editorFontScaleLevel: Int = 2
 
     var body: some Commands {
         CommandMenu(topMenuTitle) {
@@ -166,6 +167,23 @@ private struct TranslationMenuCommands: Commands {
             }
             .keyboardShortcut(".", modifiers: [.command])
             .disabled(!viewModel.isTranslating)
+
+            Divider()
+
+            Button(increaseTextSizeTitle) {
+                editorFontScaleLevel = min(4, editorFontScaleLevel + 1)
+            }
+            .keyboardShortcut("=", modifiers: [.command])
+
+            Button(decreaseTextSizeTitle) {
+                editorFontScaleLevel = max(0, editorFontScaleLevel - 1)
+            }
+            .keyboardShortcut("-", modifiers: [.command])
+
+            Button(resetTextSizeTitle) {
+                editorFontScaleLevel = 2
+            }
+            .keyboardShortcut("0", modifiers: [.command])
 
             Divider()
 
@@ -194,9 +212,9 @@ private struct TranslationMenuCommands: Commands {
                         viewModel.targetLanguage = option.code
                     } label: {
                         if option.code == viewModel.targetLanguage {
-                            Label(option.menuLabel(showCode: false), systemImage: "checkmark")
+                            Label(option.menuLabel(showCode: false, style: currentLabelStyle), systemImage: "checkmark")
                         } else {
-                            Text(option.menuLabel(showCode: false))
+                            Text(option.menuLabel(showCode: false, style: currentLabelStyle))
                         }
                     }
                 }
@@ -232,8 +250,24 @@ private struct TranslationMenuCommands: Commands {
         isJapaneseLocale ? "AI翻訳はこのデバイスで利用できません" : "AI translation unavailable on this device"
     }
 
+    private var increaseTextSizeTitle: String {
+        isJapaneseLocale ? "文字サイズを大きく" : "Increase Text Size"
+    }
+
+    private var decreaseTextSizeTitle: String {
+        isJapaneseLocale ? "文字サイズを小さく" : "Decrease Text Size"
+    }
+
+    private var resetTextSizeTitle: String {
+        isJapaneseLocale ? "文字サイズを標準に戻す" : "Reset Text Size"
+    }
+
     private var isJapaneseLocale: Bool {
         Locale.preferredLanguages.first?.hasPrefix("ja") == true
+    }
+
+    private var currentLabelStyle: TargetLanguageOption.LabelStyle {
+        viewModel.usesAppleIntelligenceTranslation ? .ai : .machine
     }
 }
 

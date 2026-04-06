@@ -29,9 +29,17 @@ struct TranslationView: View {
     @AppStorage("developerModeEnabled") private var developerModeEnabled: Bool = false
     @AppStorage("developerVerboseModeEnabled") private var developerVerboseModeEnabled: Bool = false
     @AppStorage("autoTranslateImportedTextEnabled") private var autoTranslateImportedTextEnabled: Bool = false
+    @AppStorage("editorFontScaleLevel") private var editorFontScaleLevel: Int = EditorFontScaleLevel.medium.rawValue
     @State private var importToastMessage: String?
     @State private var toastDismissTask: Task<Void, Never>?
     @State private var isMacCompactLayoutActive: Bool = false
+    @State private var isIOSDesktopLayoutActive: Bool = false
+    #if os(iOS)
+    @State private var pinchBaseFontScaleLevel: Int?
+    @State private var pinchOverlayText: String?
+    @State private var pinchOverlayPosition: CGPoint = .zero
+    @State private var pinchOverlayDismissTask: Task<Void, Never>?
+    #endif
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #if os(iOS)
@@ -94,6 +102,21 @@ struct TranslationView: View {
                         .padding(.bottom, 28)
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
+            PinchGestureCaptureOverlay { phase, scale, location in
+                handlePinchGesture(phase: phase, scale: scale, location: location)
+            }
+
+            if let pinchOverlayText {
+                Text(pinchOverlayText)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.78), in: Capsule())
+                    .position(pinchOverlayPosition)
+                    .transition(.opacity)
             }
             #endif
         }
@@ -164,6 +187,8 @@ struct TranslationView: View {
     private var contentLayout: some View {
         #if os(iOS)
         GeometryReader { proxy in
+            let isPortrait = proxy.size.height > proxy.size.width
+            let usesDesktopLikeIOSLayout = !isPortrait && proxy.size.width >= compactLayoutThresholdWidth
             let contentTopPadding: CGFloat = 8
             let contentBottomPadding: CGFloat = 2
             let verticalGap: CGFloat = 14
@@ -171,7 +196,13 @@ struct TranslationView: View {
             let splitHeight = max(140, (availableHeight - verticalGap) / 2)
 
             VStack(alignment: .leading, spacing: 14) {
-                if isWideIOSLayout {
+                if usesDesktopLikeIOSLayout {
+                    HStack(alignment: .top, spacing: 18) {
+                        sourceCard
+                        outputCard
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                } else if isWideIOSLayout && !isPortrait {
                     HStack(alignment: .top, spacing: 14) {
                         sourceCard
                         outputCard
@@ -190,14 +221,21 @@ struct TranslationView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, usesDesktopLikeIOSLayout ? 36 : 12)
             .padding(.top, contentTopPadding)
             .padding(.bottom, contentBottomPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .onAppear {
+                isIOSDesktopLayoutActive = usesDesktopLikeIOSLayout
+            }
+            .onChange(of: proxy.size) { _, newSize in
+                let portrait = newSize.height > newSize.width
+                isIOSDesktopLayoutActive = !portrait && newSize.width >= compactLayoutThresholdWidth
+            }
         }
         #else
         GeometryReader { proxy in
-            let isCompactDesktopLayout = proxy.size.width < desktopRegularLayoutThreshold
+            let isCompactDesktopLayout = proxy.size.width < compactLayoutThresholdWidth
             let contentTopPadding: CGFloat = 8
             let contentBottomPadding: CGFloat = 2
             let verticalGap: CGFloat = 14
@@ -233,13 +271,13 @@ struct TranslationView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.horizontal, isCompactDesktopLayout ? 12 : 36)
             .padding(.top, contentTopPadding)
-            .padding(.bottom, contentBottomPadding)
+            .padding(.bottom, isCompactDesktopLayout ? compactLayoutBottomMargin : contentBottomPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .onAppear {
                 isMacCompactLayoutActive = isCompactDesktopLayout
             }
             .onChange(of: proxy.size.width) { _, newWidth in
-                isMacCompactLayoutActive = newWidth < desktopRegularLayoutThreshold
+                isMacCompactLayoutActive = newWidth < compactLayoutThresholdWidth
             }
         }
         #endif
@@ -261,7 +299,9 @@ struct TranslationView: View {
             if !usesCompactDesktopLayout {
                 languagePicker
             }
-            settingsMenu(iconSize: 24, frameSize: 64)
+            if !usesCompactDesktopLayout {
+                settingsMenu(iconSize: 24, frameSize: 64)
+            }
         }
         .padding(.top, 8)
     }
@@ -286,9 +326,9 @@ struct TranslationView: View {
                         viewModel.targetLanguage = option.code
                     } label: {
                         if option.code == viewModel.targetLanguage {
-                            Label(option.menuLabel(showCode: developerModeEnabled), systemImage: "checkmark")
+                            Label(option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle), systemImage: "checkmark")
                         } else {
-                            Text(option.menuLabel(showCode: developerModeEnabled))
+                            Text(option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle))
                         }
                     }
                 }
@@ -305,7 +345,7 @@ struct TranslationView: View {
             #else
             Picker("Target", selection: $viewModel.targetLanguage) {
                 ForEach(viewModel.targetLanguageOptions) { option in
-                    Text(option.menuLabel(showCode: developerModeEnabled)).tag(option.code)
+                    Text(option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle)).tag(option.code)
                 }
             }
             .pickerStyle(.menu)
@@ -328,9 +368,9 @@ struct TranslationView: View {
                         viewModel.targetLanguage = option.code
                     } label: {
                         if option.code == viewModel.targetLanguage {
-                            Label(option.menuLabel(showCode: developerModeEnabled), systemImage: "checkmark")
+                            Label(option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle), systemImage: "checkmark")
                         } else {
-                            Text(option.menuLabel(showCode: developerModeEnabled))
+                            Text(option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle))
                         }
                     }
                 }
@@ -344,6 +384,10 @@ struct TranslationView: View {
                 }
             }
             .fixedSize(horizontal: true, vertical: false)
+            #if os(macOS)
+            // Keep the same font but remove extra trailing menu-indicator padding.
+            .menuIndicator(.hidden)
+            #endif
         }
     }
 
@@ -454,8 +498,30 @@ struct TranslationView: View {
         #endif
     }
 
-    private var desktopRegularLayoutThreshold: CGFloat {
-        1000
+    private var compactLayoutThresholdWidth: CGFloat {
+        1133
+    }
+
+    private var compactLayoutBottomMargin: CGFloat {
+        LayoutTokens.desktop.cardOuterPadding / 2
+    }
+
+    private var editorFontPointSize: CGFloat {
+        baseBodyFontPointSize * currentFontScale.multiplier
+    }
+
+    private var currentFontScale: EditorFontScaleLevel {
+        EditorFontScaleLevel(rawValue: editorFontScaleLevel) ?? .medium
+    }
+
+    private var baseBodyFontPointSize: CGFloat {
+        #if os(iOS)
+        UIFont.preferredFont(forTextStyle: .body).pointSize
+        #elseif os(macOS)
+        NSFont.preferredFont(forTextStyle: .body).pointSize
+        #else
+        14
+        #endif
     }
     // #endregion
 
@@ -464,7 +530,9 @@ struct TranslationView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Source")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                 Spacer()
                 Button("Paste", action: pasteInputFromClipboard)
                     .buttonStyle(.bordered)
@@ -481,10 +549,14 @@ struct TranslationView: View {
         #if os(iOS)
         .background(Color.clear)
         #else
-        .background(
-            colorScheme == .dark ? Color.black.opacity(0.5) : Color.white.opacity(0.7),
-            in: RoundedRectangle(cornerRadius: cardCornerRadius)
-        )
+        .background {
+            if usesCompactDesktopLayout {
+                Color.clear
+            } else {
+                RoundedRectangle(cornerRadius: cardCornerRadius)
+                    .fill(colorScheme == .dark ? Color.black.opacity(0.5) : Color.white.opacity(0.7))
+            }
+        }
         #endif
     }
 
@@ -496,18 +568,18 @@ struct TranslationView: View {
             .scrollDismissesKeyboard(.interactively)
             .scrollContentBackground(.hidden)
             .frame(maxHeight: .infinity, alignment: .top)
-            .padding(8)
-            .font(.body)
+            .padding(layoutTokens.editorInnerPadding)
+            .font(.system(size: editorFontPointSize))
             .background(colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30))
             .overlay(
                 RoundedRectangle(cornerRadius: editorCornerRadius)
                     .stroke(Color.primary.opacity(0.10), lineWidth: 1)
             )
         #else
-        MacSourceTextEditor(text: $viewModel.inputText)
+        MacSourceTextEditor(text: $viewModel.inputText, fontSize: editorFontPointSize)
             .frame(minHeight: editorMinHeight, maxHeight: .infinity, alignment: .top)
-            .padding(8)
-            .font(.body)
+            .padding(layoutTokens.editorInnerPadding)
+            .font(.system(size: editorFontPointSize))
             .background(
                 colorScheme == .dark ? Color.black.opacity(0.3) : Color.white.opacity(0.4),
                 in: RoundedRectangle(cornerRadius: editorCornerRadius)
@@ -523,7 +595,9 @@ struct TranslationView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Output")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                 Spacer()
                 if usesInlineLanguageMenuInOutputCard {
                     inlineLanguageMenu
@@ -557,6 +631,7 @@ struct TranslationView: View {
                                 .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
                         } else {
                             Text(styledOutputText)
+                                .font(.system(size: editorFontPointSize))
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -605,10 +680,14 @@ struct TranslationView: View {
         #if os(iOS)
         .background(Color.clear)
         #else
-        .background(
-            colorScheme == .dark ? Color.black.opacity(0.5) : Color.white.opacity(0.7),
-            in: RoundedRectangle(cornerRadius: cardCornerRadius)
-        )
+        .background {
+            if usesCompactDesktopLayout {
+                Color.clear
+            } else {
+                RoundedRectangle(cornerRadius: cardCornerRadius)
+                    .fill(colorScheme == .dark ? Color.black.opacity(0.5) : Color.white.opacity(0.7))
+            }
+        }
         #endif
     }
 
@@ -670,36 +749,34 @@ struct TranslationView: View {
         #endif
     }
 
-    private var cardOuterPadding: CGFloat {
+    private var usesIOSLikeFieldStyle: Bool {
         #if os(iOS)
-        return 0
+        !isIOSDesktopLayoutActive
+        #elseif os(macOS)
+        usesCompactDesktopLayout
         #else
-        return 22
+        false
         #endif
+    }
+
+    private var layoutTokens: LayoutTokens {
+        usesIOSLikeFieldStyle ? .iosLike : .desktop
+    }
+
+    private var cardOuterPadding: CGFloat {
+        layoutTokens.cardOuterPadding
     }
 
     private var cardCornerRadius: CGFloat {
-        #if os(iOS)
-        return 0
-        #else
-        return 26
-        #endif
+        layoutTokens.cardCornerRadius
     }
 
     private var editorCornerRadius: CGFloat {
-        #if os(iOS)
-        return 0
-        #else
-        return 18
-        #endif
+        layoutTokens.editorCornerRadius
     }
 
     private var editorMinHeight: CGFloat {
-        #if os(iOS)
-        return 170
-        #else
-        return 300
-        #endif
+        layoutTokens.editorMinHeight
     }
 
     // #region MARK: Derived Text
@@ -724,8 +801,8 @@ struct TranslationView: View {
     }
     // #endregion
 
-    private var outputStatusReservedHeight: CGFloat { 46 }
-    private var outputStatusBackgroundHeight: CGFloat { 84 }
+    private var outputStatusReservedHeight: CGFloat { layoutTokens.outputStatusReservedHeight }
+    private var outputStatusBackgroundHeight: CGFloat { layoutTokens.outputStatusBackgroundHeight }
 
     private var outputStatusBackgroundColor: Color {
         outputEditorBackgroundColor
@@ -739,11 +816,11 @@ struct TranslationView: View {
         if colorScheme == .dark {
             return Color(red: 68.0 / 255.0, green: 71.0 / 255.0, blue: 79.0 / 255.0)
         }
-        #if os(iOS)
+        if usesIOSLikeFieldStyle {
         return Color(red: 247.0 / 255.0, green: 238.0 / 255.0, blue: 225.0 / 255.0)
-        #else
+        } else {
         return Color(red: 253.0 / 255.0, green: 251.0 / 255.0, blue: 247.0 / 255.0)
-        #endif
+        }
     }
 
     @ViewBuilder
@@ -756,7 +833,7 @@ struct TranslationView: View {
         } else {
             HStack(spacing: 10) {
                 Text(viewModel.statusText)
-                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                    .font(.system(size: layoutTokens.statusTextFontSize, weight: .medium, design: .rounded))
                     .foregroundStyle(Color(red: 0.20, green: 0.35, blue: 0.30))
                     .lineLimit(1)
                 ForEach(viewModel.statusNotices) { notice in
@@ -814,9 +891,13 @@ struct TranslationView: View {
 
     private var currentTargetLanguageLabel: String {
         if let selected = viewModel.targetLanguageOptions.first(where: { $0.code == viewModel.targetLanguage }) {
-            return selected.menuLabel(showCode: developerModeEnabled)
+            return selected.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle)
         }
         return "Target"
+    }
+
+    private var currentLabelStyle: TargetLanguageOption.LabelStyle {
+        viewModel.usesAppleIntelligenceTranslation ? .ai : .machine
     }
 
     // #region MARK: Clipboard Actions
@@ -898,6 +979,51 @@ struct TranslationView: View {
         )
     }
 
+    private func handlePinchGesture(phase: PinchGestureCaptureOverlay.Phase, scale: CGFloat, location: CGPoint) {
+        switch phase {
+        case .began:
+            pinchBaseFontScaleLevel = currentFontScale.rawValue
+            pinchOverlayDismissTask?.cancel()
+            updatePinchOverlayPosition(location)
+            pinchOverlayText = pinchOverlayLabel
+        case .changed:
+            guard let base = pinchBaseFontScaleLevel else { return }
+            let step = Int((log(max(0.01, scale)) / log(1.15)).rounded())
+            let updated = (base + step).clamped(to: EditorFontScaleLevel.minimumRawValue...EditorFontScaleLevel.maximumRawValue)
+            if editorFontScaleLevel != updated {
+                editorFontScaleLevel = updated
+            }
+            updatePinchOverlayPosition(location)
+            pinchOverlayText = pinchOverlayLabel
+        case .ended:
+            pinchBaseFontScaleLevel = nil
+            pinchOverlayDismissTask?.cancel()
+            pinchOverlayDismissTask = Task {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        pinchOverlayText = nil
+                    }
+                }
+            }
+        }
+    }
+
+    private var pinchOverlayLabel: String {
+        if isJapaneseLocale {
+            return "文字サイズ \(currentFontScale.displayName)"
+        }
+        return "Text Size \(currentFontScale.displayName)"
+    }
+
+    private func updatePinchOverlayPosition(_ location: CGPoint) {
+        pinchOverlayPosition = CGPoint(
+            x: location.x,
+            y: max(24, location.y - 28)
+        )
+    }
+
     private func openAppSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
@@ -906,6 +1032,91 @@ struct TranslationView: View {
 
     private var isJapaneseLocale: Bool {
         Locale.preferredLanguages.first?.hasPrefix("ja") == true
+    }
+}
+
+private enum EditorFontScaleLevel: Int, CaseIterable {
+    case extraSmall = 0
+    case small = 1
+    case medium = 2
+    case large = 3
+    case extraLarge = 4
+
+    static var minimumRawValue: Int { extraSmall.rawValue }
+    static var maximumRawValue: Int { extraLarge.rawValue }
+
+    var multiplier: CGFloat {
+        switch self {
+        case .extraSmall:
+            return 0.8
+        case .small:
+            return 0.9
+        case .medium:
+            return 1.0
+        case .large:
+            return 1.2
+        case .extraLarge:
+            return 1.4
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .extraSmall:
+            return "XS"
+        case .small:
+            return "S"
+        case .medium:
+            return "M"
+        case .large:
+            return "L"
+        case .extraLarge:
+            return "XL"
+        }
+    }
+}
+
+private extension Int {
+    func clamped(to range: ClosedRange<Int>) -> Int {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
+    }
+}
+
+private extension TranslationView {
+    struct LayoutTokens {
+        var sectionTitleFontSize: CGFloat
+        var statusTextFontSize: CGFloat
+        var editorInnerPadding: CGFloat
+        var cardOuterPadding: CGFloat
+        var cardCornerRadius: CGFloat
+        var editorCornerRadius: CGFloat
+        var editorMinHeight: CGFloat
+        var outputStatusReservedHeight: CGFloat
+        var outputStatusBackgroundHeight: CGFloat
+
+        static let iosLike = LayoutTokens(
+            sectionTitleFontSize: 18,
+            statusTextFontSize: 14,
+            editorInnerPadding: 8,
+            cardOuterPadding: 0,
+            cardCornerRadius: 0,
+            editorCornerRadius: 0,
+            editorMinHeight: 170,
+            outputStatusReservedHeight: 46,
+            outputStatusBackgroundHeight: 84
+        )
+
+        static let desktop = LayoutTokens(
+            sectionTitleFontSize: 18,
+            statusTextFontSize: 14,
+            editorInnerPadding: 8,
+            cardOuterPadding: 22,
+            cardCornerRadius: 26,
+            editorCornerRadius: 18,
+            editorMinHeight: 300,
+            outputStatusReservedHeight: 46,
+            outputStatusBackgroundHeight: 84
+        )
     }
 }
 
@@ -926,9 +1137,81 @@ private struct TranslationUnsafeRecoveryTaskHost: View {
 }
 #endif
 
+#if os(iOS)
+private struct PinchGestureCaptureOverlay: UIViewRepresentable {
+    enum Phase {
+        case began
+        case changed
+        case ended
+    }
+
+    let onChanged: (_ phase: Phase, _ scale: CGFloat, _ location: CGPoint) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onChanged: onChanged)
+    }
+
+    func makeUIView(context: Context) -> PinchTrackingView {
+        let view = PinchTrackingView()
+        let recognizer = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
+        recognizer.cancelsTouchesInView = false
+        recognizer.delegate = context.coordinator
+        view.addGestureRecognizer(recognizer)
+        return view
+    }
+
+    func updateUIView(_ uiView: PinchTrackingView, context: Context) {
+        context.coordinator.onChanged = onChanged
+        uiView.onSingleTouch = { _ in }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onChanged: (_ phase: Phase, _ scale: CGFloat, _ location: CGPoint) -> Void
+
+        init(onChanged: @escaping (_ phase: Phase, _ scale: CGFloat, _ location: CGPoint) -> Void) {
+            self.onChanged = onChanged
+        }
+
+        @objc func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
+            let location = recognizer.location(in: recognizer.view)
+            switch recognizer.state {
+            case .began:
+                onChanged(.began, recognizer.scale, location)
+            case .changed:
+                onChanged(.changed, recognizer.scale, location)
+            case .ended, .cancelled, .failed:
+                onChanged(.ended, recognizer.scale, location)
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            true
+        }
+    }
+}
+
+private final class PinchTrackingView: UIView {
+    var onSingleTouch: ((CGPoint) -> Void)?
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        guard let touches = event?.allTouches else { return false }
+        if touches.count >= 2 {
+            return true
+        }
+        if touches.count == 1 {
+            onSingleTouch?(point)
+        }
+        return false
+    }
+}
+#endif
+
 #if os(macOS)
 private struct MacSourceTextEditor: NSViewRepresentable {
     @Binding var text: String
+    let fontSize: CGFloat
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -950,7 +1233,7 @@ private struct MacSourceTextEditor: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticDataDetectionEnabled = false
-        textView.font = NSFont.preferredFont(forTextStyle: .body)
+        textView.font = NSFont.systemFont(ofSize: fontSize)
         textView.backgroundColor = NSColor.clear
         textView.textContainerInset = NSSize(width: 0, height: 6)
         textView.onDropResolvedText = { droppedText in
@@ -965,6 +1248,9 @@ private struct MacSourceTextEditor: NSViewRepresentable {
         guard let textView = nsView.documentView as? DropAwareTextView else { return }
         if textView.string != text {
             textView.string = text
+        }
+        if textView.font?.pointSize != fontSize {
+            textView.font = NSFont.systemFont(ofSize: fontSize)
         }
     }
 
@@ -1244,7 +1530,7 @@ private extension View {
     ) -> some View {
         #if os(macOS)
         self
-            .frame(minHeight: 680)
+            .frame(minWidth: 362, minHeight: 680)
             .task {
                 viewModel.refreshEnginePreference()
                 if viewModel.consumeLaunchActivationRequest() {

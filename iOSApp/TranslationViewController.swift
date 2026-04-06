@@ -244,7 +244,7 @@ final class TranslationViewController: UIViewController {
 
         let languageActions = options.map { option in
             UIAction(
-                title: option.menuLabel(showCode: false),
+                title: option.menuLabel(showCode: false, style: currentLabelStyle),
                 state: option.code == viewModel.targetLanguage ? .on : .off
             ) { [weak self] _ in
                 guard let self else { return }
@@ -258,15 +258,19 @@ final class TranslationViewController: UIViewController {
         targetLanguageButton.menu = UIMenu(title: "Target", children: actions)
 
         if let selected = options.first(where: { $0.code == viewModel.targetLanguage }) {
-            targetLanguageButton.setTitle(selected.menuLabel(showCode: false), for: .normal)
+            targetLanguageButton.setTitle(selected.menuLabel(showCode: false, style: currentLabelStyle), for: .normal)
         } else {
-            targetLanguageButton.setTitle(options[0].menuLabel(showCode: false), for: .normal)
+            targetLanguageButton.setTitle(options[0].menuLabel(showCode: false, style: currentLabelStyle), for: .normal)
             viewModel.targetLanguage = options[0].code
         }
     }
 
     private func currentTargetLanguageOptions() -> [TargetLanguageOption] {
         viewModel.targetLanguageOptions
+    }
+
+    private var currentLabelStyle: TargetLanguageOption.LabelStyle {
+        viewModel.usesAppleIntelligenceTranslation ? .ai : .machine
     }
 
     private func engineSwitchAction() -> UIAction {

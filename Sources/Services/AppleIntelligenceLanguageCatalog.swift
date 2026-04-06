@@ -4,21 +4,26 @@ import FoundationModels
 #endif
 
 struct TargetLanguageOption: Hashable, Identifiable {
+    enum LabelStyle {
+        case ai
+        case machine
+    }
+
     let code: String
     let displayName: String
     let nativeDisplayName: String
 
     var id: String { code }
 
-    func menuLabel(showCode: Bool) -> String {
+    func menuLabel(showCode: Bool, style: LabelStyle) -> String {
         let label: String
         switch code.lowercased() {
         case "en", "en-us":
-            label = "English (US)"
+            label = style == .ai ? "English" : "English (US)"
         case "en-gb":
             label = "English (UK)"
         case "zh", "zh-hans":
-            label = "中文 (简体)"
+            label = style == .ai ? "中文" : "中文 (简体)"
         case "zh-hant":
             label = "中文 (繁体)"
         default:
