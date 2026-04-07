@@ -43,6 +43,12 @@ struct TranslationView: View {
     @State private var isCompactOutputReadingMode: Bool = false
     @State private var isOutputCollapseDragActive: Bool = false
     @State private var didCollapseDuringCurrentDrag: Bool = false
+    @State private var hasReachedTopEdgeSinceCollapse: Bool = false
+    @State private var currentOutputScrollDistance: CGFloat = 0
+    @State private var isOutputExpandSpringArmed: Bool = false
+    #if os(macOS)
+    @State private var macTopEdgeWheelMonitor: Any?
+    #endif
     #if os(iOS)
     @State private var pinchBaseFontScaleLevel: Int?
     @State private var pinchOverlayHost: PinchOverlayHost?
@@ -673,14 +679,6 @@ struct TranslationView: View {
             }
 
             ScrollView {
-                GeometryReader { proxy in
-                    Color.clear
-                        .preference(
-                            key: OutputScrollOffsetPreferenceKey.self,
-                            value: proxy.frame(in: .named(outputScrollCoordinateSpaceName)).minY
-                        )
-                }
-                .frame(height: 0)
                 Group {
                     if viewModel.translatedText.isEmpty {
                         Color.clear
@@ -695,6 +693,15 @@ struct TranslationView: View {
                 .padding(.top, 12)
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
+                .overlay(alignment: .top) {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: OutputScrollOffsetPreferenceKey.self,
+                            value: proxy.frame(in: .named(outputScrollCoordinateSpaceName)).minY
+                        )
+                    }
+                    .frame(height: 0)
+                }
             }
             .coordinateSpace(name: outputScrollCoordinateSpaceName)
             .onPreferenceChange(OutputScrollOffsetPreferenceKey.self) { minY in
@@ -707,6 +714,12 @@ struct TranslationView: View {
             .simultaneousGesture(editorPinchGesture(host: .output), including: .gesture)
             #else
             .frame(minHeight: editorMinHeight, maxHeight: .infinity, alignment: .top)
+            .onAppear {
+                installMacTopEdgeWheelMonitorIfNeeded()
+            }
+            .onDisappear {
+                uninstallMacTopEdgeWheelMonitor()
+            }
             #endif
             .clipped()
             #if os(iOS)
@@ -883,6 +896,13 @@ struct TranslationView: View {
         "output-scroll-area"
     }
 
+    private var compactOutputCollapseTriggerOffset: CGFloat {
+        #if os(macOS)
+        6
+        #else
+        28
+        #endif
+    }
     private var compactOutputExpandReleaseOffset: CGFloat { 8 }
 
     private var canUseCompactOutputReadingMode: Bool {
@@ -892,11 +912,15 @@ struct TranslationView: View {
     }
 
     private var isOutputScrollLocked: Bool {
+        #if os(macOS)
+        return false
+        #else
         guard canUseCompactOutputReadingMode else { return false }
         if !isCompactOutputReadingMode {
             return true
         }
         return isOutputCollapseDragActive && didCollapseDuringCurrentDrag
+        #endif
     }
 
     private func compactStackedHeights(
@@ -926,14 +950,33 @@ struct TranslationView: View {
             return
         }
 
-        guard isCompactOutputReadingMode else { return }
-
+        #if os(macOS)
+        let scrollDistance = abs(minY)
+        #else
         let scrollDistance = max(0, -minY)
-        if scrollDistance <= compactOutputExpandReleaseOffset {
+        #endif
+        currentOutputScrollDistance = scrollDistance
+        if !isCompactOutputReadingMode {
+            #if os(macOS)
+            guard scrollDistance > compactOutputCollapseTriggerOffset else { return }
             withAnimation(.easeInOut(duration: 0.24)) {
-                isCompactOutputReadingMode = false
+                isCompactOutputReadingMode = true
             }
+            hasReachedTopEdgeSinceCollapse = false
+            #endif
+            return
         }
+
+        if !hasReachedTopEdgeSinceCollapse, scrollDistance <= compactOutputExpandReleaseOffset {
+            hasReachedTopEdgeSinceCollapse = true
+            return
+        }
+
+        let topSpringDistance = max(0, minY)
+        guard hasReachedTopEdgeSinceCollapse else { return }
+        guard isOutputExpandSpringArmed else { return }
+        guard topSpringDistance > compactOutputExpandReleaseOffset else { return }
+        restoreDefaultFieldSizesFromCompactMode()
     }
 
     private var outputCollapseActivationGesture: some Gesture {
@@ -941,12 +984,20 @@ struct TranslationView: View {
             .onChanged { value in
                 guard canUseCompactOutputReadingMode else { return }
                 isOutputCollapseDragActive = true
-                guard !isCompactOutputReadingMode else { return }
+                if isCompactOutputReadingMode {
+                    guard hasReachedTopEdgeSinceCollapse else { return }
+                    guard currentOutputScrollDistance <= compactOutputExpandReleaseOffset else { return }
+                    guard value.translation.height > 3 else { return }
+                    isOutputExpandSpringArmed = true
+                    return
+                }
                 guard value.translation.height < -3 else { return }
                 didCollapseDuringCurrentDrag = true
                 withAnimation(.easeInOut(duration: 0.24)) {
                     isCompactOutputReadingMode = true
                 }
+                hasReachedTopEdgeSinceCollapse = currentOutputScrollDistance <= compactOutputExpandReleaseOffset
+                isOutputExpandSpringArmed = false
             }
             .onEnded { _ in
                 isOutputCollapseDragActive = false
@@ -964,11 +1015,44 @@ struct TranslationView: View {
     private func disableCompactOutputReadingModeIfNeeded() {
         isOutputCollapseDragActive = false
         didCollapseDuringCurrentDrag = false
+        hasReachedTopEdgeSinceCollapse = false
+        currentOutputScrollDistance = 0
+        isOutputExpandSpringArmed = false
         guard isCompactOutputReadingMode else { return }
         withAnimation(.easeInOut(duration: 0.20)) {
             isCompactOutputReadingMode = false
         }
     }
+
+    private func restoreDefaultFieldSizesFromCompactMode() {
+        withAnimation(.easeInOut(duration: 0.24)) {
+            isCompactOutputReadingMode = false
+        }
+        hasReachedTopEdgeSinceCollapse = false
+        isOutputExpandSpringArmed = false
+    }
+
+    #if os(macOS)
+    private func installMacTopEdgeWheelMonitorIfNeeded() {
+        guard macTopEdgeWheelMonitor == nil else { return }
+        macTopEdgeWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            guard canUseCompactOutputReadingMode else { return event }
+            guard isCompactOutputReadingMode else { return event }
+            guard hasReachedTopEdgeSinceCollapse else { return event }
+            guard currentOutputScrollDistance <= compactOutputExpandReleaseOffset else { return event }
+            guard event.scrollingDeltaY > 0 else { return event }
+            isOutputExpandSpringArmed = true
+            restoreDefaultFieldSizesFromCompactMode()
+            return event
+        }
+    }
+
+    private func uninstallMacTopEdgeWheelMonitor() {
+        guard let macTopEdgeWheelMonitor else { return }
+        NSEvent.removeMonitor(macTopEdgeWheelMonitor)
+        self.macTopEdgeWheelMonitor = nil
+    }
+    #endif
 
     // #region MARK: Derived Text
     private var indexesText: String {
@@ -1663,6 +1747,7 @@ private enum SourceDropImport {
             .replacingOccurrences(of: "\\'", with: "'")
     }
 }
+
 #endif
 
 private extension View {
