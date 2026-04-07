@@ -50,6 +50,8 @@ struct TranslationView: View {
     @State private var clutchSelectedSegmentIndex: Int?
     @State private var sourceHighlightRange: NSRange?
     @State private var clutchSelectionOrigin: ClutchSelectionOrigin?
+    @State private var clutchOutputScrollFinalizeTask: Task<Void, Never>?
+    @State private var isClutchLayoutLocked: Bool = false
     #if os(macOS)
     @State private var macTopEdgeWheelMonitor: Any?
     #endif
@@ -640,6 +642,7 @@ struct TranslationView: View {
             fontSize: editorFontPointSize,
             highlightedRange: sourceHighlightRange,
             centerOnHighlightIfNeeded: shouldAutoCenterSourceForClutch,
+            topAlignOnHighlightScroll: shouldTopAlignSourceForClutch,
             onCursorLocationChanged: handleSourceCursorLocationChange
         )
             .frame(maxHeight: .infinity, alignment: .top)
@@ -660,6 +663,7 @@ struct TranslationView: View {
             fontSize: editorFontPointSize,
             highlightedRange: sourceHighlightRange,
             centerOnHighlightIfNeeded: shouldAutoCenterSourceForClutch,
+            topAlignOnHighlightScroll: shouldTopAlignSourceForClutch,
             onCursorLocationChanged: handleSourceCursorLocationChange
         )
             .frame(minHeight: sourceEditorMinHeight, maxHeight: .infinity, alignment: .top)
@@ -728,9 +732,13 @@ struct TranslationView: View {
                     guard clutchModeEnabled else { return }
                     guard let segmentIndex else { return }
                     guard clutchSelectionOrigin != .output else { return }
-                    withAnimation(.easeInOut(duration: 0.24)) {
-                        proxy.scrollTo(outputSegmentID(for: segmentIndex), anchor: .center)
-                    }
+                    scrollOutputToClutchTarget(segmentIndex: segmentIndex, proxy: proxy)
+                }
+                .onChange(of: clutchSelectionOrigin) { _, origin in
+                    guard clutchModeEnabled else { return }
+                    guard origin == .source else { return }
+                    guard let segmentIndex = clutchSelectedSegmentIndex else { return }
+                    scrollOutputToClutchTarget(segmentIndex: segmentIndex, proxy: proxy)
                 }
             }
             .coordinateSpace(name: outputScrollCoordinateSpaceName)
@@ -931,7 +939,10 @@ struct TranslationView: View {
 
     private func handleSourceCursorLocationChange(_ utf16Location: Int) {
         guard clutchModeEnabled, clutchCanTrackSourceSelection else {
-            sourceHighlightRange = nil
+            scheduleSourceDrivenClutchStateUpdate(
+                sourceRange: nil,
+                selectedSegmentIndex: nil
+            )
             return
         }
 
@@ -940,23 +951,84 @@ struct TranslationView: View {
             let upper = binding.sourceRange.location + binding.sourceRange.length
             return utf16Location >= lower && utf16Location <= upper
         }) else {
-            sourceHighlightRange = nil
+            scheduleSourceDrivenClutchStateUpdate(
+                sourceRange: nil,
+                selectedSegmentIndex: nil
+            )
             return
         }
 
-        sourceHighlightRange = binding.sourceRange
-        clutchSelectionOrigin = .source
-        clutchSelectedSegmentIndex = binding.segmentIndex
+        scheduleSourceDrivenClutchStateUpdate(
+            sourceRange: binding.sourceRange,
+            selectedSegmentIndex: binding.segmentIndex
+        )
+    }
+
+    private func scheduleSourceDrivenClutchStateUpdate(
+        sourceRange: NSRange?,
+        selectedSegmentIndex: Int?
+    ) {
+        DispatchQueue.main.async {
+            sourceHighlightRange = sourceRange
+            clutchSelectionOrigin = selectedSegmentIndex == nil ? nil : .source
+            clutchSelectedSegmentIndex = selectedSegmentIndex
+        }
     }
 
     private var shouldAutoCenterSourceForClutch: Bool {
         clutchSelectionOrigin == .output
     }
 
+    private var shouldTopAlignSourceForClutch: Bool {
+        isCompactStackedLayoutActive
+    }
+
     private func resetClutchSelection() {
+        clutchOutputScrollFinalizeTask?.cancel()
+        clutchOutputScrollFinalizeTask = nil
+        isClutchLayoutLocked = false
         clutchSelectedSegmentIndex = nil
         sourceHighlightRange = nil
         clutchSelectionOrigin = nil
+    }
+
+    private func scrollOutputToClutchTarget(segmentIndex: Int, proxy: ScrollViewProxy) {
+        isClutchLayoutLocked = true
+        let anchor: UnitPoint = isCompactStackedLayoutActive ? .top : .center
+        withAnimation(.easeInOut(duration: 0.24)) {
+            proxy.scrollTo(outputSegmentID(for: segmentIndex), anchor: anchor)
+        }
+
+        clutchOutputScrollFinalizeTask?.cancel()
+        clutchOutputScrollFinalizeTask = Task {
+            #if os(iOS)
+            // iOS can relayout multiple times after clutch selection (keyboard/field resize),
+            // so keep re-aligning at short intervals until the scroll settles.
+            let retries = 7
+            for attempt in 0..<retries {
+                if attempt == 0 {
+                    await Task.yield()
+                } else {
+                    try? await Task.sleep(nanoseconds: 160_000_000)
+                }
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard clutchSelectedSegmentIndex == segmentIndex else { return }
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo(outputSegmentID(for: segmentIndex), anchor: anchor)
+                    }
+                }
+            }
+            #else
+            try? await Task.sleep(nanoseconds: 280_000_000)
+            #endif
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                isClutchLayoutLocked = false
+            }
+        }
     }
     // #endregion
 
@@ -1089,6 +1161,7 @@ struct TranslationView: View {
     }
 
     private func handleOutputScrollOffsetChange(_ minY: CGFloat) {
+        guard !isClutchLayoutLocked else { return }
         guard canUseCompactOutputReadingMode else {
             disableCompactOutputReadingModeIfNeeded()
             return
@@ -1127,6 +1200,7 @@ struct TranslationView: View {
         DragGesture(minimumDistance: 3)
             .onChanged { value in
                 guard canUseCompactOutputReadingMode else { return }
+                guard !isClutchLayoutLocked else { return }
                 isOutputCollapseDragActive = true
                 if isCompactOutputReadingMode {
                     guard hasReachedTopEdgeSinceCollapse else { return }
@@ -1586,6 +1660,7 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
     let fontSize: CGFloat
     let highlightedRange: NSRange?
     let centerOnHighlightIfNeeded: Bool
+    let topAlignOnHighlightScroll: Bool
     let onCursorLocationChanged: (Int) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -1609,20 +1684,27 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         return textView
     }
 
-    func updateUIView(_ uiView: UITextView, context _: Context) {
+    func updateUIView(_ uiView: UITextView, context: Context) {
         if uiView.text != text {
             uiView.text = text
         }
         if uiView.font?.pointSize != fontSize {
             uiView.font = UIFont.systemFont(ofSize: fontSize)
         }
-        uiView.applyClutchHighlight(highlightedRange, centerIfNeeded: centerOnHighlightIfNeeded)
+        context.coordinator.performProgrammaticUpdate {
+            uiView.applyClutchHighlight(
+                highlightedRange,
+                centerIfNeeded: centerOnHighlightIfNeeded,
+                topAlignIfNeeded: topAlignOnHighlightScroll
+            )
+        }
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
         @Binding private var text: String
         private let onCursorLocationChanged: (Int) -> Void
         private weak var textView: UITextView?
+        private var isProgrammaticUpdateInProgress: Bool = false
 
         init(text: Binding<String>, onCursorLocationChanged: @escaping (Int) -> Void) {
             _text = text
@@ -1631,6 +1713,12 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
 
         func attachTextView(_ textView: UITextView) {
             self.textView = textView
+        }
+
+        func performProgrammaticUpdate(_ action: () -> Void) {
+            isProgrammaticUpdateInProgress = true
+            action()
+            isProgrammaticUpdateInProgress = false
         }
 
         func makeKeyboardAccessoryToolbar() -> UIToolbar {
@@ -1642,18 +1730,26 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
             let proofread = UIBarButtonItem(title: "AI校正", style: .plain, target: nil, action: nil)
             proofread.isEnabled = false
             let spacer = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-            let done = UIBarButtonItem(title: "OK", style: .done, target: self, action: #selector(doneTapped))
+            let doneStyle: UIBarButtonItem.Style
+            if #available(iOS 26.0, *) {
+                doneStyle = .prominent
+            } else {
+                doneStyle = .done
+            }
+            let done = UIBarButtonItem(title: "OK", style: doneStyle, target: self, action: #selector(doneTapped))
 
             toolbar.items = [retranslate, proofread, spacer, done]
             return toolbar
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            guard !isProgrammaticUpdateInProgress else { return }
             text = textView.text ?? ""
             onCursorLocationChanged(textView.selectedRange.location)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
+            guard !isProgrammaticUpdateInProgress else { return }
             onCursorLocationChanged(textView.selectedRange.location)
         }
 
@@ -1664,37 +1760,98 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
 }
 
 private extension UITextView {
-    func applyClutchHighlight(_ range: NSRange?, centerIfNeeded: Bool) {
-        let mutable = NSMutableAttributedString(string: text ?? "")
-        let fullRange = NSRange(location: 0, length: mutable.length)
+    func applyClutchHighlight(_ range: NSRange?, centerIfNeeded: Bool, topAlignIfNeeded: Bool) {
+        let textStorage = textStorage
+        let fullRange = NSRange(location: 0, length: textStorage.length)
         let font = self.font ?? UIFont.systemFont(ofSize: UIFont.preferredFont(forTextStyle: .body).pointSize)
-        mutable.addAttribute(.font, value: font, range: fullRange)
-        mutable.addAttribute(.foregroundColor, value: UIColor.label, range: fullRange)
-
-        if centerIfNeeded,
-            let range,
-            range.location >= 0,
-            range.length > 0,
-            NSMaxRange(range) <= mutable.length
-        {
-            mutable.addAttribute(.backgroundColor, value: UIColor.systemBlue.withAlphaComponent(0.20), range: range)
-        }
-
         let selected = selectedRange
-        attributedText = mutable
-        selectedRange = selected
+
+        textStorage.beginEditing()
+        textStorage.removeAttribute(.backgroundColor, range: fullRange)
+        textStorage.addAttribute(.font, value: font, range: fullRange)
+        textStorage.addAttribute(.foregroundColor, value: UIColor.label, range: fullRange)
 
         if
             let range,
             range.location >= 0,
             range.length > 0,
-            NSMaxRange(range) <= mutable.length
+            NSMaxRange(range) <= textStorage.length
         {
-            centerVisibleRangeIfNeeded(range)
+            textStorage.addAttribute(
+                .backgroundColor,
+                value: UIColor.systemBlue.withAlphaComponent(0.20),
+                range: range
+            )
+        }
+        textStorage.endEditing()
+
+        if selectedRange != selected {
+            selectedRange = selected
+        }
+
+        if
+            let range,
+            range.location >= 0,
+            range.length > 0,
+            NSMaxRange(range) <= textStorage.length
+        {
+            scrollHighlightedRangeIfNeeded(
+                range,
+                centerIfNeeded: centerIfNeeded,
+                topAlignIfNeeded: topAlignIfNeeded
+            )
         }
     }
 
-    private func centerVisibleRangeIfNeeded(_ range: NSRange) {
+    private func scrollHighlightedRangeIfNeeded(
+        _ range: NSRange,
+        centerIfNeeded: Bool,
+        topAlignIfNeeded: Bool
+    ) {
+        guard centerIfNeeded else { return }
+        applyClutchScrollOffset(
+            for: range,
+            topAlignIfNeeded: topAlignIfNeeded,
+            force: false,
+            animated: false
+        )
+
+        // Recompute with latest layout/insets. This is more reliable than a single
+        // animated jump for long distances on iPhone.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+            self?.applyClutchScrollOffset(
+                for: range,
+                topAlignIfNeeded: topAlignIfNeeded,
+                force: true,
+                animated: false
+            )
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) { [weak self] in
+            self?.applyClutchScrollOffset(
+                for: range,
+                topAlignIfNeeded: topAlignIfNeeded,
+                force: true,
+                animated: false
+            )
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.58) { [weak self] in
+            self?.applyClutchScrollOffset(
+                for: range,
+                topAlignIfNeeded: topAlignIfNeeded,
+                force: true,
+                animated: false
+            )
+        }
+    }
+
+    private func applyClutchScrollOffset(
+        for range: NSRange,
+        topAlignIfNeeded: Bool,
+        force: Bool,
+        animated: Bool
+    ) {
+        layoutIfNeeded()
+
         let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
         var targetRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
         targetRect.origin.x += textContainerInset.left
@@ -1702,15 +1859,21 @@ private extension UITextView {
         guard !targetRect.isEmpty else { return }
 
         let visibleRect = bounds.inset(by: adjustedContentInset)
-        if visibleRect.intersects(targetRect) {
+        if !force, !topAlignIfNeeded, visibleRect.intersects(targetRect) {
             return
         }
 
-        var y = targetRect.midY - (bounds.height * 0.5)
+        let y: CGFloat
+        if topAlignIfNeeded {
+            y = targetRect.minY - adjustedContentInset.top
+        } else {
+            y = targetRect.midY - (bounds.height * 0.5)
+        }
         let minOffset = -adjustedContentInset.top
         let maxOffset = max(minOffset, contentSize.height - bounds.height + adjustedContentInset.bottom)
-        y = min(max(y, minOffset), maxOffset)
-        setContentOffset(CGPoint(x: contentOffset.x, y: y), animated: true)
+        let clampedY = min(max(y, minOffset), maxOffset)
+        let targetOffset = CGPoint(x: contentOffset.x, y: clampedY)
+        setContentOffset(targetOffset, animated: animated)
     }
 }
 #endif
@@ -1721,6 +1884,7 @@ private struct MacSourceTextEditor: NSViewRepresentable {
     let fontSize: CGFloat
     let highlightedRange: NSRange?
     let centerOnHighlightIfNeeded: Bool
+    let topAlignOnHighlightScroll: Bool
     let onCursorLocationChanged: (Int) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -1762,7 +1926,11 @@ private struct MacSourceTextEditor: NSViewRepresentable {
         if textView.font?.pointSize != fontSize {
             textView.font = NSFont.systemFont(ofSize: fontSize)
         }
-        textView.applyClutchHighlight(highlightedRange, centerIfNeeded: centerOnHighlightIfNeeded)
+        textView.applyClutchHighlight(
+            highlightedRange,
+            centerIfNeeded: centerOnHighlightIfNeeded,
+            topAlignIfNeeded: topAlignOnHighlightScroll
+        )
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -1828,7 +1996,7 @@ private final class DropAwareTextView: NSTextView {
         return true
     }
 
-    func applyClutchHighlight(_ range: NSRange?, centerIfNeeded: Bool) {
+    func applyClutchHighlight(_ range: NSRange?, centerIfNeeded: Bool, topAlignIfNeeded: Bool) {
         guard let textStorage else { return }
         let fullRange = NSRange(location: 0, length: textStorage.length)
         textStorage.removeAttribute(clutchHighlightAttribute, range: fullRange)
@@ -1842,11 +2010,11 @@ private final class DropAwareTextView: NSTextView {
 
         textStorage.addAttribute(clutchHighlightAttribute, value: clutchHighlightColor, range: range)
         if centerIfNeeded {
-            centerVisibleRangeIfNeeded(range)
+            scrollHighlightedRangeIfNeeded(range, topAlignIfNeeded: topAlignIfNeeded)
         }
     }
 
-    private func centerVisibleRangeIfNeeded(_ range: NSRange) {
+    private func scrollHighlightedRangeIfNeeded(_ range: NSRange, topAlignIfNeeded: Bool) {
         guard
             let layoutManager,
             let textContainer,
@@ -1858,13 +2026,17 @@ private final class DropAwareTextView: NSTextView {
         guard !glyphRect.isNull, !glyphRect.isInfinite else { return }
 
         let visibleRect = scrollView.contentView.documentVisibleRect
-        if visibleRect.intersects(glyphRect) {
+        if !topAlignIfNeeded, visibleRect.intersects(glyphRect) {
             return
         }
 
         var target = glyphRect
-        target.origin.y -= max(0, (visibleRect.height - target.height) / 2)
-        target.size.height = visibleRect.height
+        if topAlignIfNeeded {
+            target.origin.y = glyphRect.minY
+        } else {
+            target.origin.y -= max(0, (visibleRect.height - target.height) / 2)
+            target.size.height = visibleRect.height
+        }
         scrollView.contentView.scrollToVisible(target)
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
