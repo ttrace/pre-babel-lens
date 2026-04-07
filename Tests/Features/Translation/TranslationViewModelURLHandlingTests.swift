@@ -4,6 +4,89 @@ import Testing
 
 struct TranslationViewModelURLHandlingTests {
     @Test
+    func translateShowsUserAlertForTranslationServiceConnectionFailure() async throws {
+        let counter = TranslationCallCounter()
+        let connectionError = NSError(
+            domain: NSCocoaErrorDomain,
+            code: 4097,
+            userInfo: [NSDebugDescriptionErrorKey: "connection to service named com.apple.translation.text"]
+        )
+        let viewModel = await makeViewModel(
+            counter: counter,
+            engine: ThrowingTranslationEngine(error: connectionError)
+        )
+        await MainActor.run {
+            viewModel.inputText = "Hello"
+        }
+
+        await viewModel.translate()
+
+        await MainActor.run {
+            #expect(viewModel.userAlert != nil)
+            #expect(viewModel.userAlert?.offersSettingsShortcut == true)
+            #expect(!(viewModel.errorMessage ?? "").isEmpty)
+        }
+    }
+
+    @Test
+    func translateShowsUserAlertForAvailableLocalePairsServiceFailureMessage() async throws {
+        let counter = TranslationCallCounter()
+        let connectionError = NSError(
+            domain: NSCocoaErrorDomain,
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Failed to complete availableLocalePairsForTask, using dedicated mach port",
+                NSDebugDescriptionErrorKey: "connection to service named com.apple.translation.text",
+            ]
+        )
+        let viewModel = await makeViewModel(
+            counter: counter,
+            engine: ThrowingTranslationEngine(error: connectionError)
+        )
+        await MainActor.run {
+            viewModel.inputText = "Hello"
+        }
+
+        await viewModel.translate()
+
+        await MainActor.run {
+            #expect(viewModel.userAlert != nil)
+            #expect(viewModel.userAlert?.offersSettingsShortcut == true)
+            #expect(!(viewModel.errorMessage ?? "").isEmpty)
+        }
+    }
+
+    @Test
+    @MainActor
+    func experimentModePersistsAcrossViewModelInstances() throws {
+        let suiteName = "TranslationViewModelURLHandlingTests.\(#function)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let counter = TranslationCallCounter()
+        let firstViewModel = makeViewModel(counter: counter, userDefaults: defaults)
+        firstViewModel.experimentMode = .rawInput
+
+        let secondViewModel = makeViewModel(counter: counter, userDefaults: defaults)
+        #expect(secondViewModel.experimentMode == .rawInput)
+    }
+
+    @Test
+    @MainActor
+    func experimentModeFallsBackToSegmentedWhenPersistedValueIsInvalid() throws {
+        let suiteName = "TranslationViewModelURLHandlingTests.\(#function)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("invalid-mode", forKey: "appState.experimentMode")
+
+        let counter = TranslationCallCounter()
+        let viewModel = makeViewModel(counter: counter, userDefaults: defaults)
+        #expect(viewModel.experimentMode == .segmented)
+    }
+
+    @Test
     func handleIncomingURLUpdatesInputAndTranslates() async throws {
         let counter = TranslationCallCounter()
         let viewModel = await makeViewModel(counter: counter)
@@ -143,15 +226,31 @@ struct TranslationViewModelURLHandlingTests {
     }
 
     @MainActor
-    private func makeViewModel(counter: TranslationCallCounter) -> TranslationViewModel {
-        let engine = CountingTranslationEngine(counter: counter)
-        let policy = FixedTranslationEnginePolicy(engine: engine)
+    private func makeViewModel(
+        counter: TranslationCallCounter,
+        userDefaults: UserDefaults? = nil,
+        engine: (any TranslationEngine)? = nil
+    ) -> TranslationViewModel {
+        let resolvedUserDefaults = userDefaults ?? Self.makeIsolatedUserDefaults()
+        let selectedEngine = engine ?? CountingTranslationEngine(counter: counter)
+        let policy = FixedTranslationEnginePolicy(engine: selectedEngine)
         let orchestrator = TranslationOrchestrator(
             preprocessEngine: DeterministicPreprocessEngine(),
             enginePolicy: policy
         )
 
-        return TranslationViewModel(orchestrator: orchestrator)
+        return TranslationViewModel(
+            orchestrator: orchestrator,
+            userDefaults: resolvedUserDefaults
+        )
+    }
+
+    @MainActor
+    private static func makeIsolatedUserDefaults() -> UserDefaults {
+        let suiteName = "TranslationViewModelURLHandlingTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName) ?? .standard
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
     }
 }
 
@@ -185,5 +284,14 @@ private struct CountingTranslationEngine: TranslationEngine {
                 translatedText: "[call:\(callIndex)] \(segment.text)"
             )
         }
+    }
+}
+
+private struct ThrowingTranslationEngine: TranslationEngine {
+    let name: String = "throwing-test-engine"
+    let error: NSError
+
+    func translate(_ input: TranslationInput) async throws -> [SegmentOutput] {
+        throw error
     }
 }

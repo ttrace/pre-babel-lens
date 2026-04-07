@@ -39,6 +39,10 @@ struct TranslationView: View {
     @State private var toastDismissTask: Task<Void, Never>?
     @State private var isMacCompactLayoutActive: Bool = false
     @State private var isIOSDesktopLayoutActive: Bool = false
+    @State private var isCompactStackedLayoutActive: Bool = false
+    @State private var isCompactOutputReadingMode: Bool = false
+    @State private var isOutputCollapseDragActive: Bool = false
+    @State private var didCollapseDuringCurrentDrag: Bool = false
     #if os(iOS)
     @State private var pinchBaseFontScaleLevel: Int?
     @State private var pinchOverlayHost: PinchOverlayHost?
@@ -109,6 +113,16 @@ struct TranslationView: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             #endif
+        }
+        .onChange(of: viewModel.isTranslating) { _, isTranslating in
+            if isTranslating {
+                disableCompactOutputReadingModeIfNeeded()
+            }
+        }
+        .onChange(of: viewModel.translatedText) { _, translatedText in
+            if translatedText.isEmpty {
+                disableCompactOutputReadingModeIfNeeded()
+            }
         }
         #if canImport(Translation)
         baseView
@@ -190,6 +204,14 @@ struct TranslationView: View {
                 140,
                 (availableHeight - verticalGap - outputStatusReservedHeight - compactStatusBottomMargin) / 2
             )
+            let usesStackedCompactLayout = !(usesDesktopLikeIOSLayout || (isWideIOSLayout && !isPortrait))
+            let compactHeights = compactStackedHeights(
+                availableHeight: availableHeight,
+                verticalGap: verticalGap,
+                statusReservedHeight: outputStatusReservedHeight,
+                bottomMargin: compactStatusBottomMargin,
+                defaultSplitHeight: splitHeight
+            )
 
             VStack(alignment: .leading, spacing: 14) {
                 if usesDesktopLikeIOSLayout {
@@ -208,9 +230,9 @@ struct TranslationView: View {
                 } else {
                     VStack(alignment: .leading, spacing: verticalGap) {
                         sourceCard
-                            .frame(height: splitHeight)
-                        outputColumnWithStatus(contentHeight: splitHeight)
-                            .frame(height: splitHeight + outputStatusReservedHeight)
+                            .frame(height: compactHeights.sourceHeight)
+                        outputColumnWithStatus(contentHeight: compactHeights.outputHeight)
+                            .frame(height: compactHeights.outputHeight + outputStatusReservedHeight)
                             .padding(.bottom, compactStatusBottomMargin)
                     }
                 }
@@ -226,11 +248,16 @@ struct TranslationView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .onAppear {
                 isIOSDesktopLayoutActive = usesDesktopLikeIOSLayout
+                updateCompactStackedLayoutState(isActive: usesStackedCompactLayout)
             }
             .onChange(of: proxy.size) { _, newSize in
                 let portrait = newSize.height > newSize.width
                 isIOSDesktopLayoutActive = !portrait && newSize.width >= compactLayoutThresholdWidth
+                let usesDesktop = !portrait && newSize.width >= compactLayoutThresholdWidth
+                let usesWideLandscape = isWideIOSLayout && !portrait
+                updateCompactStackedLayoutState(isActive: !(usesDesktop || usesWideLandscape))
             }
+            .animation(.easeInOut(duration: 0.24), value: isCompactOutputReadingMode)
         }
         #else
         GeometryReader { proxy in
@@ -250,6 +277,13 @@ struct TranslationView: View {
                 170,
                 (availableHeight - verticalGap - outputStatusReservedHeight - compactStatusBottomMargin) / 2
             )
+            let compactHeights = compactStackedHeights(
+                availableHeight: availableHeight,
+                verticalGap: verticalGap,
+                statusReservedHeight: outputStatusReservedHeight,
+                bottomMargin: compactStatusBottomMargin,
+                defaultSplitHeight: splitHeight
+            )
 
             VStack(alignment: .leading, spacing: isCompactDesktopLayout ? 14 : 18) {
                 desktopHeader
@@ -257,9 +291,9 @@ struct TranslationView: View {
                 if isCompactDesktopLayout {
                     VStack(alignment: .leading, spacing: verticalGap) {
                         sourceCard
-                            .frame(height: splitHeight)
-                        outputColumnWithStatus(contentHeight: splitHeight)
-                            .frame(height: splitHeight + outputStatusReservedHeight)
+                            .frame(height: compactHeights.sourceHeight)
+                        outputColumnWithStatus(contentHeight: compactHeights.outputHeight)
+                            .frame(height: compactHeights.outputHeight + outputStatusReservedHeight)
                             .padding(.bottom, compactStatusBottomMargin)
                     }
                 } else {
@@ -282,10 +316,14 @@ struct TranslationView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .onAppear {
                 isMacCompactLayoutActive = isCompactDesktopLayout
+                updateCompactStackedLayoutState(isActive: isCompactDesktopLayout)
             }
             .onChange(of: proxy.size.width) { _, newWidth in
-                isMacCompactLayoutActive = newWidth < compactLayoutThresholdWidth
+                let isCompact = newWidth < compactLayoutThresholdWidth
+                isMacCompactLayoutActive = isCompact
+                updateCompactStackedLayoutState(isActive: isCompact)
             }
+            .animation(.easeInOut(duration: 0.24), value: isCompactOutputReadingMode)
         }
         #endif
     }
@@ -588,7 +626,7 @@ struct TranslationView: View {
             }
         #else
         MacSourceTextEditor(text: $viewModel.inputText, fontSize: editorFontPointSize)
-            .frame(minHeight: editorMinHeight, maxHeight: .infinity, alignment: .top)
+            .frame(minHeight: sourceEditorMinHeight, maxHeight: .infinity, alignment: .top)
             .padding(layoutTokens.editorInnerPadding)
             .font(.system(size: editorFontPointSize))
             .background(
@@ -635,6 +673,14 @@ struct TranslationView: View {
             }
 
             ScrollView {
+                GeometryReader { proxy in
+                    Color.clear
+                        .preference(
+                            key: OutputScrollOffsetPreferenceKey.self,
+                            value: proxy.frame(in: .named(outputScrollCoordinateSpaceName)).minY
+                        )
+                }
+                .frame(height: 0)
                 Group {
                     if viewModel.translatedText.isEmpty {
                         Color.clear
@@ -650,6 +696,12 @@ struct TranslationView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
             }
+            .coordinateSpace(name: outputScrollCoordinateSpaceName)
+            .onPreferenceChange(OutputScrollOffsetPreferenceKey.self) { minY in
+                handleOutputScrollOffsetChange(minY)
+            }
+            .scrollDisabled(isOutputScrollLocked)
+            .simultaneousGesture(outputCollapseActivationGesture, including: .gesture)
             #if os(iOS)
             .frame(maxHeight: .infinity, alignment: .top)
             .simultaneousGesture(editorPinchGesture(host: .output), including: .gesture)
@@ -801,6 +853,123 @@ struct TranslationView: View {
         layoutTokens.editorMinHeight
     }
 
+    private var sourceEditorMinHeight: CGFloat {
+        if isCompactOutputReadingMode && isCompactStackedLayoutActive {
+            return compactCollapsedSourceEditorMinHeight
+        }
+        return editorMinHeight
+    }
+
+    private var compactCollapsedSourceEditorMinHeight: CGFloat {
+        max(60, editorFontPointSize * 3.2)
+    }
+
+    private var compactCollapsedSourceCardHeight: CGFloat {
+        let headerHeight: CGFloat = 36
+        let editorVerticalPadding = layoutTokens.editorInnerPadding * 2 + 14
+        return max(
+            96,
+            headerHeight
+                + compactCollapsedSourceEditorMinHeight
+                + editorVerticalPadding
+                + compactCollapsedSourceTopPaddingCompensation
+                + (cardOuterPadding * 2)
+        )
+    }
+
+    private var compactCollapsedSourceTopPaddingCompensation: CGFloat { 8 }
+
+    private var outputScrollCoordinateSpaceName: String {
+        "output-scroll-area"
+    }
+
+    private var compactOutputExpandReleaseOffset: CGFloat { 8 }
+
+    private var canUseCompactOutputReadingMode: Bool {
+        isCompactStackedLayoutActive
+            && !viewModel.isTranslating
+            && !viewModel.translatedText.isEmpty
+    }
+
+    private var isOutputScrollLocked: Bool {
+        guard canUseCompactOutputReadingMode else { return false }
+        if !isCompactOutputReadingMode {
+            return true
+        }
+        return isOutputCollapseDragActive && didCollapseDuringCurrentDrag
+    }
+
+    private func compactStackedHeights(
+        availableHeight: CGFloat,
+        verticalGap: CGFloat,
+        statusReservedHeight: CGFloat,
+        bottomMargin: CGFloat,
+        defaultSplitHeight: CGFloat
+    ) -> (sourceHeight: CGFloat, outputHeight: CGFloat) {
+        let defaultHeights = (sourceHeight: defaultSplitHeight, outputHeight: defaultSplitHeight)
+        guard canUseCompactOutputReadingMode, isCompactOutputReadingMode else {
+            return defaultHeights
+        }
+
+        let sourceHeight = min(defaultSplitHeight, compactCollapsedSourceCardHeight)
+        let outputHeight = availableHeight - verticalGap - statusReservedHeight - bottomMargin - sourceHeight
+        let minimumOutputHeight: CGFloat = 140
+        guard outputHeight >= minimumOutputHeight else {
+            return defaultHeights
+        }
+        return (sourceHeight, outputHeight)
+    }
+
+    private func handleOutputScrollOffsetChange(_ minY: CGFloat) {
+        guard canUseCompactOutputReadingMode else {
+            disableCompactOutputReadingModeIfNeeded()
+            return
+        }
+
+        guard isCompactOutputReadingMode else { return }
+
+        let scrollDistance = max(0, -minY)
+        if scrollDistance <= compactOutputExpandReleaseOffset {
+            withAnimation(.easeInOut(duration: 0.24)) {
+                isCompactOutputReadingMode = false
+            }
+        }
+    }
+
+    private var outputCollapseActivationGesture: some Gesture {
+        DragGesture(minimumDistance: 3)
+            .onChanged { value in
+                guard canUseCompactOutputReadingMode else { return }
+                isOutputCollapseDragActive = true
+                guard !isCompactOutputReadingMode else { return }
+                guard value.translation.height < -3 else { return }
+                didCollapseDuringCurrentDrag = true
+                withAnimation(.easeInOut(duration: 0.24)) {
+                    isCompactOutputReadingMode = true
+                }
+            }
+            .onEnded { _ in
+                isOutputCollapseDragActive = false
+                didCollapseDuringCurrentDrag = false
+            }
+    }
+
+    private func updateCompactStackedLayoutState(isActive: Bool) {
+        isCompactStackedLayoutActive = isActive
+        if !isActive {
+            disableCompactOutputReadingModeIfNeeded()
+        }
+    }
+
+    private func disableCompactOutputReadingModeIfNeeded() {
+        isOutputCollapseDragActive = false
+        didCollapseDuringCurrentDrag = false
+        guard isCompactOutputReadingMode else { return }
+        withAnimation(.easeInOut(duration: 0.20)) {
+            isCompactOutputReadingMode = false
+        }
+    }
+
     // #region MARK: Derived Text
     private var indexesText: String {
         [
@@ -854,7 +1023,7 @@ struct TranslationView: View {
             HStack(spacing: 10) {
                 Text(viewModel.statusText)
                     .font(.system(size: layoutTokens.statusTextFontSize, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color(red: 0.20, green: 0.35, blue: 0.30))
+                    .foregroundStyle(statusHeadlineColor)
                     .lineLimit(1)
                 ForEach(viewModel.statusNotices) { notice in
                     statusNoticeLegendRow(notice)
@@ -907,6 +1076,12 @@ struct TranslationView: View {
                 ? Color.white.opacity(0.95)
                 : Color.black.opacity(0.82)
         }
+    }
+
+    private var statusHeadlineColor: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.92)
+            : Color(red: 0.20, green: 0.35, blue: 0.30)
     }
 
     private var currentTargetLanguageLabel: String {
@@ -1067,6 +1242,14 @@ struct TranslationView: View {
 
     private var isJapaneseLocale: Bool {
         Locale.preferredLanguages.first?.hasPrefix("ja") == true
+    }
+}
+
+private struct OutputScrollOffsetPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

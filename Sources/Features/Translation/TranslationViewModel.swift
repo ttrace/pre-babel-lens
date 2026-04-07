@@ -4,6 +4,7 @@ import Foundation
 final class TranslationViewModel: ObservableObject {
     private enum AppStateKey {
         static let targetLanguage = "appState.targetLanguage"
+        static let experimentMode = "appState.experimentMode"
     }
 
     enum StatusNoticeKind: Equatable {
@@ -45,7 +46,11 @@ final class TranslationViewModel: ObservableObject {
             persistTargetLanguageSelection()
         }
     }
-    @Published var experimentMode: TranslationExperimentMode = .segmented
+    @Published var experimentMode: TranslationExperimentMode {
+        didSet {
+            persistExperimentModeSelection()
+        }
+    }
     @Published var inputText: String = ""
     @Published var glossaryText: String = ""
 
@@ -95,6 +100,9 @@ final class TranslationViewModel: ObservableObject {
     ) {
         self.userDefaults = userDefaults
         self.iOSEnginePolicy = iOSEnginePolicy
+        self.experimentMode = TranslationExperimentMode(
+            rawValue: userDefaults.string(forKey: AppStateKey.experimentMode) ?? ""
+        ) ?? .segmented
         let initialOptions = AppleIntelligenceLanguageCatalog.translationFrameworkLanguageOptions()
         let persistedTargetLanguage = userDefaults.string(forKey: AppStateKey.targetLanguage)
         if
@@ -241,6 +249,10 @@ final class TranslationViewModel: ObservableObject {
         userDefaults.set(targetLanguage, forKey: AppStateKey.targetLanguage)
     }
 
+    private func persistExperimentModeSelection() {
+        userDefaults.set(experimentMode.rawValue, forKey: AppStateKey.experimentMode)
+    }
+
     private func runManagedTranslation() async {
         if let previousTask = activeTranslationTask {
             previousTask.cancel()
@@ -381,7 +393,7 @@ final class TranslationViewModel: ObservableObject {
                 detectedLanguageCode = detected
                 aiLanguageSupported = false
             }
-            if let alert = userAlert(for: pipelineError.localizedDescription) {
+            if let alert = userAlert(for: pipelineError) {
                 userAlert = alert
                 errorMessage = alert.inlineMessage
             } else {
@@ -391,7 +403,7 @@ final class TranslationViewModel: ObservableObject {
             status = .ready
             appendSessionLog("pipeline-error: \(pipelineError.localizedDescription)")
         } catch {
-            if let alert = userAlert(for: error.localizedDescription) {
+            if let alert = userAlert(for: error) {
                 userAlert = alert
                 errorMessage = alert.inlineMessage
             } else {
@@ -442,7 +454,37 @@ final class TranslationViewModel: ObservableObject {
             }
     }
 
-    private func userAlert(for localizedDescription: String) -> UserAlert? {
+    private func userAlert(for error: Error) -> UserAlert? {
+        let nsError = error as NSError
+        let debugDescription = (nsError.userInfo[NSDebugDescriptionErrorKey] as? String) ?? ""
+        let combined = "\(debugDescription) \(nsError.localizedDescription)".lowercased()
+
+        let isTranslationServiceConnectionError =
+            (nsError.domain == NSCocoaErrorDomain && nsError.code == 4097)
+            || combined.contains("com.apple.translation.text")
+            || combined.contains("availablelocalepairsfortask")
+            || combined.contains("connection to service")
+            || combined.contains("translationd")
+
+        if isTranslationServiceConnectionError {
+            return UserAlert(
+                title: isJapaneseLocale
+                    ? "翻訳サービスに接続できません"
+                    : "Translation Service Unavailable",
+                message: isJapaneseLocale
+                    ? "システムの翻訳サービスに接続できませんでした。しばらく待って再試行してください。\n\n改善しない場合は、Settingsで言語データのダウンロード状況を確認し、アプリを再起動してから再度お試しください。"
+                    : "Could not connect to the system translation service. Please wait a moment and try again.\n\nIf the issue continues, check language data downloads in Settings, relaunch the app, and try again.",
+                inlineMessage: isJapaneseLocale
+                    ? "翻訳サービスに接続できません。再試行してください。"
+                    : "Translation service is unavailable. Please retry.",
+                offersSettingsShortcut: true
+            )
+        }
+
+        return userAlert(forLocalizedDescription: error.localizedDescription)
+    }
+
+    private func userAlert(forLocalizedDescription localizedDescription: String) -> UserAlert? {
         if localizedDescription.contains("current build toolchain") {
             return UserAlert(
                 title: isJapaneseLocale ? "Foundation Models を利用できません" : "Foundation Models Unavailable",
