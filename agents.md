@@ -192,6 +192,22 @@ Prefer tests for:
   2. Confirm version/build metadata on `release/ios`.
   3. Trigger and verify Xcode Cloud from `release/ios`.
 
+## Branch Naming and Version-Line Workflow
+Because App Store review can overlap with ongoing development, keep version lines separated by branch.
+
+Branch naming rules:
+- Next-release integration branch: `release/ios-<major>.<minor>.x` (example: `release/ios-0.8.x`)
+- App Store review / maintenance line: `release/ios-<major>.<minor>.x` for the submitted version line (example: `release/ios-0.7.x`)
+- Feature branches: `feature/<short-feature-name>` (example: `feature/clutch-bidirectional-highlighting`)
+- Hotfix branches: `hotfix/<short-fix-name>`
+
+Workflow rules:
+1. Base all new feature work on the current next-release branch (for example, `release/ios-0.8.x`).
+2. Keep App Store pending/maintenance fixes on the submitted version line branch (for example, `release/ios-0.7.x`).
+3. Merge feature branches into the next-release branch, not directly into the maintenance branch.
+4. For fixes needed in both lines, commit on the maintenance line first, then forward-port to the next-release line (`cherry-pick -x` preferred for traceability).
+5. Keep one concern per branch/PR to minimize cross-version merge risk.
+
 ## Implementation Guidance for Codex
 When making changes:
 1. read surrounding code first
