@@ -49,6 +49,7 @@ struct TranslationView: View {
     @State private var isOutputExpandSpringArmed: Bool = false
     @State private var clutchSelectedSegmentIndex: Int?
     @State private var sourceHighlightRange: NSRange?
+    @State private var clutchSelectionOrigin: ClutchSelectionOrigin?
     #if os(macOS)
     @State private var macTopEdgeWheelMonitor: Any?
     #endif
@@ -638,6 +639,7 @@ struct TranslationView: View {
             text: $viewModel.inputText,
             fontSize: editorFontPointSize,
             highlightedRange: sourceHighlightRange,
+            centerOnHighlightIfNeeded: shouldAutoCenterSourceForClutch,
             onCursorLocationChanged: handleSourceCursorLocationChange
         )
             .frame(maxHeight: .infinity, alignment: .top)
@@ -657,6 +659,7 @@ struct TranslationView: View {
             text: $viewModel.inputText,
             fontSize: editorFontPointSize,
             highlightedRange: sourceHighlightRange,
+            centerOnHighlightIfNeeded: shouldAutoCenterSourceForClutch,
             onCursorLocationChanged: handleSourceCursorLocationChange
         )
             .frame(minHeight: sourceEditorMinHeight, maxHeight: .infinity, alignment: .top)
@@ -724,6 +727,7 @@ struct TranslationView: View {
                 .onChange(of: clutchSelectedSegmentIndex) { _, segmentIndex in
                     guard clutchModeEnabled else { return }
                     guard let segmentIndex else { return }
+                    guard clutchSelectionOrigin != .output else { return }
                     withAnimation(.easeInOut(duration: 0.24)) {
                         proxy.scrollTo(outputSegmentID(for: segmentIndex), anchor: .center)
                     }
@@ -887,6 +891,11 @@ struct TranslationView: View {
         let sourceRange: NSRange
     }
 
+    private enum ClutchSelectionOrigin {
+        case source
+        case output
+    }
+
     private var clutchSegmentBindings: [ClutchSegmentBinding] {
         guard !viewModel.sourceSegments.isEmpty else { return [] }
         let sortedSegments = viewModel.sourceSegments.sorted { $0.index < $1.index }
@@ -912,6 +921,7 @@ struct TranslationView: View {
 
     private func handleOutputSegmentTap(_ segmentIndex: Int) {
         guard clutchModeEnabled else { return }
+        clutchSelectionOrigin = .output
         clutchSelectedSegmentIndex = segmentIndex
         guard let sourceRange = clutchSegmentBindings.first(where: { $0.segmentIndex == segmentIndex })?.sourceRange else {
             return
@@ -935,12 +945,18 @@ struct TranslationView: View {
         }
 
         sourceHighlightRange = binding.sourceRange
+        clutchSelectionOrigin = .source
         clutchSelectedSegmentIndex = binding.segmentIndex
+    }
+
+    private var shouldAutoCenterSourceForClutch: Bool {
+        clutchSelectionOrigin == .output
     }
 
     private func resetClutchSelection() {
         clutchSelectedSegmentIndex = nil
         sourceHighlightRange = nil
+        clutchSelectionOrigin = nil
     }
     // #endregion
 
@@ -1569,6 +1585,7 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
     @Binding var text: String
     let fontSize: CGFloat
     let highlightedRange: NSRange?
+    let centerOnHighlightIfNeeded: Bool
     let onCursorLocationChanged: (Int) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -1599,7 +1616,7 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         if uiView.font?.pointSize != fontSize {
             uiView.font = UIFont.systemFont(ofSize: fontSize)
         }
-        uiView.applyClutchHighlight(highlightedRange)
+        uiView.applyClutchHighlight(highlightedRange, centerIfNeeded: centerOnHighlightIfNeeded)
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -1647,14 +1664,14 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
 }
 
 private extension UITextView {
-    func applyClutchHighlight(_ range: NSRange?) {
+    func applyClutchHighlight(_ range: NSRange?, centerIfNeeded: Bool) {
         let mutable = NSMutableAttributedString(string: text ?? "")
         let fullRange = NSRange(location: 0, length: mutable.length)
         let font = self.font ?? UIFont.systemFont(ofSize: UIFont.preferredFont(forTextStyle: .body).pointSize)
         mutable.addAttribute(.font, value: font, range: fullRange)
         mutable.addAttribute(.foregroundColor, value: UIColor.label, range: fullRange)
 
-        if
+        if centerIfNeeded,
             let range,
             range.location >= 0,
             range.length > 0,
@@ -1703,6 +1720,7 @@ private struct MacSourceTextEditor: NSViewRepresentable {
     @Binding var text: String
     let fontSize: CGFloat
     let highlightedRange: NSRange?
+    let centerOnHighlightIfNeeded: Bool
     let onCursorLocationChanged: (Int) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -1744,7 +1762,7 @@ private struct MacSourceTextEditor: NSViewRepresentable {
         if textView.font?.pointSize != fontSize {
             textView.font = NSFont.systemFont(ofSize: fontSize)
         }
-        textView.applyClutchHighlight(highlightedRange)
+        textView.applyClutchHighlight(highlightedRange, centerIfNeeded: centerOnHighlightIfNeeded)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -1810,7 +1828,7 @@ private final class DropAwareTextView: NSTextView {
         return true
     }
 
-    func applyClutchHighlight(_ range: NSRange?) {
+    func applyClutchHighlight(_ range: NSRange?, centerIfNeeded: Bool) {
         guard let textStorage else { return }
         let fullRange = NSRange(location: 0, length: textStorage.length)
         textStorage.removeAttribute(clutchHighlightAttribute, range: fullRange)
@@ -1823,7 +1841,9 @@ private final class DropAwareTextView: NSTextView {
         else { return }
 
         textStorage.addAttribute(clutchHighlightAttribute, value: clutchHighlightColor, range: range)
-        centerVisibleRangeIfNeeded(range)
+        if centerIfNeeded {
+            centerVisibleRangeIfNeeded(range)
+        }
     }
 
     private func centerVisibleRangeIfNeeded(_ range: NSRange) {
