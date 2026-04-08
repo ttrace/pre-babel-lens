@@ -41,20 +41,13 @@ struct TranslationView: View {
     @State private var isMacCompactLayoutActive: Bool = false
     @State private var isIOSDesktopLayoutActive: Bool = false
     @State private var isCompactStackedLayoutActive: Bool = false
-    @State private var isCompactOutputReadingMode: Bool = false
-    @State private var isOutputCollapseDragActive: Bool = false
-    @State private var didCollapseDuringCurrentDrag: Bool = false
-    @State private var hasReachedTopEdgeSinceCollapse: Bool = false
-    @State private var currentOutputScrollDistance: CGFloat = 0
-    @State private var isOutputExpandSpringArmed: Bool = false
+    @State private var compactLayoutMode: CompactLayoutMode = .balanced
+    @State private var isSourceEditingUnlocked: Bool = false
     @State private var clutchSelectedSegmentIndex: Int?
     @State private var sourceHighlightRange: NSRange?
     @State private var clutchSelectionOrigin: ClutchSelectionOrigin?
     @State private var clutchOutputScrollFinalizeTask: Task<Void, Never>?
     @State private var isClutchLayoutLocked: Bool = false
-    #if os(macOS)
-    @State private var macTopEdgeWheelMonitor: Any?
-    #endif
     #if os(iOS)
     @State private var pinchBaseFontScaleLevel: Int?
     @State private var pinchOverlayHost: PinchOverlayHost?
@@ -128,13 +121,15 @@ struct TranslationView: View {
         }
         .onChange(of: viewModel.isTranslating) { _, isTranslating in
             if isTranslating {
-                disableCompactOutputReadingModeIfNeeded()
+                compactLayoutMode = .balanced
+                lockSourceEditingAndDismissKeyboard()
             }
         }
         .onChange(of: viewModel.translatedText) { _, translatedText in
             if translatedText.isEmpty {
-                disableCompactOutputReadingModeIfNeeded()
+                compactLayoutMode = .balanced
                 resetClutchSelection()
+                lockSourceEditingAndDismissKeyboard()
             }
         }
         .onChange(of: viewModel.segmentOutputs) { _, _ in
@@ -143,6 +138,9 @@ struct TranslationView: View {
         .onChange(of: clutchModeEnabled) { _, enabled in
             if !enabled {
                 resetClutchSelection()
+                isSourceEditingUnlocked = true
+            } else {
+                isSourceEditingUnlocked = false
             }
         }
         .onChange(of: viewModel.inputText) { _, _ in
@@ -285,7 +283,7 @@ struct TranslationView: View {
                 let usesWideLandscape = isWideIOSLayout && !portrait
                 updateCompactStackedLayoutState(isActive: !(usesDesktop || usesWideLandscape))
             }
-            .animation(.easeInOut(duration: 0.24), value: isCompactOutputReadingMode)
+            .animation(.easeInOut(duration: 0.24), value: compactLayoutMode)
         }
         #else
         GeometryReader { proxy in
@@ -351,7 +349,7 @@ struct TranslationView: View {
                 isMacCompactLayoutActive = isCompact
                 updateCompactStackedLayoutState(isActive: isCompact)
             }
-            .animation(.easeInOut(duration: 0.24), value: isCompactOutputReadingMode)
+            .animation(.easeInOut(duration: 0.24), value: compactLayoutMode)
         }
         #endif
     }
@@ -643,6 +641,8 @@ struct TranslationView: View {
             highlightedRange: sourceHighlightRange,
             centerOnHighlightIfNeeded: shouldAutoCenterSourceForClutch,
             topAlignOnHighlightScroll: shouldTopAlignSourceForClutch,
+            isEditable: !clutchModeEnabled || isSourceEditingUnlocked,
+            onLockedTapInHighlight: unlockSourceEditing,
             onCursorLocationChanged: handleSourceCursorLocationChange
         )
             .frame(maxHeight: .infinity, alignment: .top)
@@ -718,15 +718,6 @@ struct TranslationView: View {
                         .padding(.top, 12)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 12)
-                        .overlay(alignment: .top) {
-                            GeometryReader { geometryProxy in
-                                Color.clear.preference(
-                                    key: OutputScrollOffsetPreferenceKey.self,
-                                    value: geometryProxy.frame(in: .named(outputScrollCoordinateSpaceName)).minY
-                                )
-                            }
-                            .frame(height: 0)
-                        }
                 }
                 .onChange(of: clutchSelectedSegmentIndex) { _, segmentIndex in
                     guard clutchModeEnabled else { return }
@@ -742,22 +733,11 @@ struct TranslationView: View {
                 }
             }
             .coordinateSpace(name: outputScrollCoordinateSpaceName)
-            .onPreferenceChange(OutputScrollOffsetPreferenceKey.self) { minY in
-                handleOutputScrollOffsetChange(minY)
-            }
-            .scrollDisabled(isOutputScrollLocked)
-            .simultaneousGesture(outputCollapseActivationGesture, including: .gesture)
             #if os(iOS)
             .frame(maxHeight: .infinity, alignment: .top)
             .simultaneousGesture(editorPinchGesture(host: .output), including: .gesture)
             #else
-            .frame(minHeight: editorMinHeight, maxHeight: .infinity, alignment: .top)
-            .onAppear {
-                installMacTopEdgeWheelMonitorIfNeeded()
-            }
-            .onDisappear {
-                uninstallMacTopEdgeWheelMonitor()
-            }
+            .frame(minHeight: outputEditorMinHeight, maxHeight: .infinity, alignment: .top)
             #endif
             .clipped()
             #if os(iOS)
@@ -789,6 +769,12 @@ struct TranslationView: View {
                     .frame(maxHeight: .infinity, alignment: .top)
             }
             outputStatusPanel
+        }
+        .overlay(alignment: .top) {
+            if shouldShowCompactLayoutGrabber {
+                compactLayoutGrabber
+                    .padding(.top, -8)
+            }
         }
         .padding(cardOuterPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -904,6 +890,12 @@ struct TranslationView: View {
         case output
     }
 
+    private enum CompactLayoutMode {
+        case balanced
+        case translationReader
+        case sourceReader
+    }
+
     private var clutchSegmentBindings: [ClutchSegmentBinding] {
         guard !viewModel.sourceSegments.isEmpty else { return [] }
         let sortedSegments = viewModel.sourceSegments.sorted { $0.index < $1.index }
@@ -929,6 +921,7 @@ struct TranslationView: View {
 
     private func handleOutputSegmentTap(_ segmentIndex: Int) {
         guard clutchModeEnabled else { return }
+        lockSourceEditingAndDismissKeyboard()
         clutchSelectionOrigin = .output
         clutchSelectedSegmentIndex = segmentIndex
         guard let sourceRange = clutchSegmentBindings.first(where: { $0.segmentIndex == segmentIndex })?.sourceRange else {
@@ -990,6 +983,22 @@ struct TranslationView: View {
         clutchSelectedSegmentIndex = nil
         sourceHighlightRange = nil
         clutchSelectionOrigin = nil
+    }
+
+    private func unlockSourceEditing() {
+        guard clutchModeEnabled else { return }
+        guard !isSourceEditingUnlocked else { return }
+        DispatchQueue.main.async {
+            isSourceEditingUnlocked = true
+        }
+    }
+
+    private func lockSourceEditingAndDismissKeyboard() {
+        #if os(iOS)
+        dismissKeyboard()
+        #endif
+        guard clutchModeEnabled else { return }
+        isSourceEditingUnlocked = false
     }
 
     private func scrollOutputToClutchTarget(segmentIndex: Int, proxy: ScrollViewProxy) {
@@ -1075,60 +1084,156 @@ struct TranslationView: View {
     }
 
     private var sourceEditorMinHeight: CGFloat {
-        if isCompactOutputReadingMode && isCompactStackedLayoutActive {
-            return compactCollapsedSourceEditorMinHeight
+        compactEditorMinHeight(for: .source)
+    }
+
+    private var outputEditorMinHeight: CGFloat {
+        compactEditorMinHeight(for: .output)
+    }
+
+    private func compactEditorMinHeight(for panel: CompactPanel) -> CGFloat {
+        guard isCompactStackedLayoutActive else { return editorMinHeight }
+
+        let compactMinLines = max(3, ceil(editorFontPointSize * 0.17))
+        let collapsedHeight = max(60, editorFontPointSize * compactMinLines + 22)
+        switch compactLayoutMode {
+        case .balanced:
+            return editorMinHeight
+        case .translationReader:
+            return panel == .source ? collapsedHeight : editorMinHeight
+        case .sourceReader:
+            return panel == .output ? collapsedHeight : editorMinHeight
         }
-        return editorMinHeight
     }
 
-    private var compactCollapsedSourceEditorMinHeight: CGFloat {
-        max(60, editorFontPointSize * 3.2)
+    private enum CompactPanel {
+        case source
+        case output
     }
 
-    private var compactCollapsedSourceCardHeight: CGFloat {
-        let headerHeight: CGFloat = 36
-        let editorVerticalPadding = layoutTokens.editorInnerPadding * 2 + 14
-        return max(
-            96,
-            headerHeight
-                + compactCollapsedSourceEditorMinHeight
-                + editorVerticalPadding
-                + compactCollapsedSourceTopPaddingCompensation
-                + (cardOuterPadding * 2)
+    private var shouldShowCompactLayoutGrabber: Bool {
+        isCompactStackedLayoutActive
+    }
+
+    @ViewBuilder
+    private var compactLayoutGrabber: some View {
+        VStack(spacing: 0) {
+            Group {
+                if let grabberImage = compactGrabberImage {
+                    grabberImage
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    Capsule()
+                        .fill(Color.primary.opacity(colorScheme == .dark ? 0.42 : 0.22))
+                }
+            }
+            .frame(width: 52, height: 8)
+            .contentShape(Rectangle())
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 12)
+                .onEnded { value in
+                    guard isCompactStackedLayoutActive else { return }
+                    let deltaY = value.translation.height
+                    guard abs(deltaY) > 12 else { return }
+                    if deltaY < 0 {
+                        advanceCompactLayoutModeUp()
+                    } else {
+                        advanceCompactLayoutModeDown()
+                    }
+                    lockSourceEditingAndDismissKeyboard()
+                }
         )
     }
 
-    private var compactCollapsedSourceTopPaddingCompensation: CGFloat { 8 }
+    private var compactGrabberImage: Image? {
+        #if os(iOS)
+        if let image = loadGrabberUIImage() {
+            return Image(uiImage: image)
+        }
+        return nil
+        #elseif os(macOS)
+        if let image = loadGrabberNSImage() {
+            return Image(nsImage: image)
+        }
+        return nil
+        #else
+        return nil
+        #endif
+    }
+
+    #if os(iOS)
+    private func loadGrabberUIImage() -> UIImage? {
+        let bundles: [Bundle] = {
+            #if SWIFT_PACKAGE
+            return [.module, .main] + Bundle.allFrameworks + Bundle.allBundles
+            #else
+            return [.main] + Bundle.allFrameworks + Bundle.allBundles
+            #endif
+        }()
+
+        for bundle in bundles {
+            if let image = UIImage(named: "grabbar", in: bundle, compatibleWith: nil) {
+                return image
+            }
+            if let imageURL = bundle.url(forResource: "grabbar", withExtension: "png"),
+               let image = UIImage(contentsOfFile: imageURL.path) {
+                return image
+            }
+        }
+        return nil
+    }
+    #endif
+
+    #if os(macOS)
+    private func loadGrabberNSImage() -> NSImage? {
+        let bundles: [Bundle] = {
+            #if SWIFT_PACKAGE
+            return [.module, .main] + Bundle.allFrameworks + Bundle.allBundles
+            #else
+            return [.main] + Bundle.allFrameworks + Bundle.allBundles
+            #endif
+        }()
+
+        for bundle in bundles {
+            if let imageURL = bundle.url(forResource: "grabbar", withExtension: "png"),
+               let image = NSImage(contentsOf: imageURL) {
+                return image
+            }
+        }
+        return NSImage(named: "grabbar")
+    }
+    #endif
+
+    private func advanceCompactLayoutModeUp() {
+        switch compactLayoutMode {
+        case .sourceReader:
+            compactLayoutMode = .balanced
+        case .balanced:
+            compactLayoutMode = .translationReader
+        case .translationReader:
+            break
+        }
+    }
+
+    private func advanceCompactLayoutModeDown() {
+        switch compactLayoutMode {
+        case .translationReader:
+            compactLayoutMode = .balanced
+        case .balanced:
+            compactLayoutMode = .sourceReader
+        case .sourceReader:
+            break
+        }
+    }
 
     private var outputScrollCoordinateSpaceName: String {
         "output-scroll-area"
-    }
-
-    private var compactOutputCollapseTriggerOffset: CGFloat {
-        #if os(macOS)
-        6
-        #else
-        28
-        #endif
-    }
-    private var compactOutputExpandReleaseOffset: CGFloat { 8 }
-
-    private var canUseCompactOutputReadingMode: Bool {
-        isCompactStackedLayoutActive
-            && !viewModel.isTranslating
-            && !viewModel.translatedText.isEmpty
-    }
-
-    private var isOutputScrollLocked: Bool {
-        #if os(macOS)
-        return false
-        #else
-        guard canUseCompactOutputReadingMode else { return false }
-        if !isCompactOutputReadingMode {
-            return true
-        }
-        return isOutputCollapseDragActive && didCollapseDuringCurrentDrag
-        #endif
     }
 
     private func compactStackedHeights(
@@ -1138,131 +1243,33 @@ struct TranslationView: View {
         bottomMargin: CGFloat,
         defaultSplitHeight: CGFloat
     ) -> (sourceHeight: CGFloat, outputHeight: CGFloat) {
-        let defaultHeights = (sourceHeight: defaultSplitHeight, outputHeight: defaultSplitHeight)
-        guard canUseCompactOutputReadingMode, isCompactOutputReadingMode else {
+        let minimumHeight: CGFloat = 120
+        let pairHeight = max(availableHeight - verticalGap - statusReservedHeight - bottomMargin, minimumHeight * 2)
+        let defaultHeights = (sourceHeight: defaultSplitHeight, outputHeight: max(minimumHeight, pairHeight - defaultSplitHeight))
+
+        guard isCompactStackedLayoutActive else { return defaultHeights }
+
+        switch compactLayoutMode {
+        case .balanced:
             return defaultHeights
+        case .translationReader:
+            let sourceHeight = max(minimumHeight, compactEditorMinHeight(for: .source) + 72)
+            let outputHeight = max(minimumHeight, pairHeight - sourceHeight)
+            return (sourceHeight, outputHeight)
+        case .sourceReader:
+            let outputHeight = max(minimumHeight, compactEditorMinHeight(for: .output) + 72)
+            let sourceHeight = max(minimumHeight, pairHeight - outputHeight)
+            return (sourceHeight, outputHeight)
         }
-
-        let sourceHeight = min(defaultSplitHeight, compactCollapsedSourceCardHeight)
-        let outputHeight = availableHeight - verticalGap - statusReservedHeight - bottomMargin - sourceHeight
-        let minimumOutputHeight: CGFloat = 140
-        guard outputHeight >= minimumOutputHeight else {
-            return defaultHeights
-        }
-        return (sourceHeight, outputHeight)
-    }
-
-    private func handleOutputScrollOffsetChange(_ minY: CGFloat) {
-        guard !isClutchLayoutLocked else { return }
-        guard canUseCompactOutputReadingMode else {
-            disableCompactOutputReadingModeIfNeeded()
-            return
-        }
-
-        #if os(macOS)
-        let scrollDistance = abs(minY)
-        #else
-        let scrollDistance = max(0, -minY)
-        #endif
-        currentOutputScrollDistance = scrollDistance
-        if !isCompactOutputReadingMode {
-            #if os(macOS)
-            guard scrollDistance > compactOutputCollapseTriggerOffset else { return }
-            withAnimation(.easeInOut(duration: 0.24)) {
-                isCompactOutputReadingMode = true
-            }
-            hasReachedTopEdgeSinceCollapse = false
-            #endif
-            return
-        }
-
-        if !hasReachedTopEdgeSinceCollapse, scrollDistance <= compactOutputExpandReleaseOffset {
-            hasReachedTopEdgeSinceCollapse = true
-            return
-        }
-
-        let topSpringDistance = max(0, minY)
-        guard hasReachedTopEdgeSinceCollapse else { return }
-        guard isOutputExpandSpringArmed else { return }
-        guard topSpringDistance > compactOutputExpandReleaseOffset else { return }
-        restoreDefaultFieldSizesFromCompactMode()
-    }
-
-    private var outputCollapseActivationGesture: some Gesture {
-        DragGesture(minimumDistance: 3)
-            .onChanged { value in
-                guard canUseCompactOutputReadingMode else { return }
-                guard !isClutchLayoutLocked else { return }
-                isOutputCollapseDragActive = true
-                if isCompactOutputReadingMode {
-                    guard hasReachedTopEdgeSinceCollapse else { return }
-                    guard currentOutputScrollDistance <= compactOutputExpandReleaseOffset else { return }
-                    guard value.translation.height > 3 else { return }
-                    isOutputExpandSpringArmed = true
-                    return
-                }
-                guard value.translation.height < -3 else { return }
-                didCollapseDuringCurrentDrag = true
-                withAnimation(.easeInOut(duration: 0.24)) {
-                    isCompactOutputReadingMode = true
-                }
-                hasReachedTopEdgeSinceCollapse = currentOutputScrollDistance <= compactOutputExpandReleaseOffset
-                isOutputExpandSpringArmed = false
-            }
-            .onEnded { _ in
-                isOutputCollapseDragActive = false
-                didCollapseDuringCurrentDrag = false
-            }
     }
 
     private func updateCompactStackedLayoutState(isActive: Bool) {
         isCompactStackedLayoutActive = isActive
         if !isActive {
-            disableCompactOutputReadingModeIfNeeded()
+            compactLayoutMode = .balanced
+            lockSourceEditingAndDismissKeyboard()
         }
     }
-
-    private func disableCompactOutputReadingModeIfNeeded() {
-        isOutputCollapseDragActive = false
-        didCollapseDuringCurrentDrag = false
-        hasReachedTopEdgeSinceCollapse = false
-        currentOutputScrollDistance = 0
-        isOutputExpandSpringArmed = false
-        guard isCompactOutputReadingMode else { return }
-        withAnimation(.easeInOut(duration: 0.20)) {
-            isCompactOutputReadingMode = false
-        }
-    }
-
-    private func restoreDefaultFieldSizesFromCompactMode() {
-        withAnimation(.easeInOut(duration: 0.24)) {
-            isCompactOutputReadingMode = false
-        }
-        hasReachedTopEdgeSinceCollapse = false
-        isOutputExpandSpringArmed = false
-    }
-
-    #if os(macOS)
-    private func installMacTopEdgeWheelMonitorIfNeeded() {
-        guard macTopEdgeWheelMonitor == nil else { return }
-        macTopEdgeWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
-            guard canUseCompactOutputReadingMode else { return event }
-            guard isCompactOutputReadingMode else { return event }
-            guard hasReachedTopEdgeSinceCollapse else { return event }
-            guard currentOutputScrollDistance <= compactOutputExpandReleaseOffset else { return event }
-            guard event.scrollingDeltaY > 0 else { return event }
-            isOutputExpandSpringArmed = true
-            restoreDefaultFieldSizesFromCompactMode()
-            return event
-        }
-    }
-
-    private func uninstallMacTopEdgeWheelMonitor() {
-        guard let macTopEdgeWheelMonitor else { return }
-        NSEvent.removeMonitor(macTopEdgeWheelMonitor)
-        self.macTopEdgeWheelMonitor = nil
-    }
-    #endif
 
     // #region MARK: Derived Text
     private var indexesText: String {
@@ -1539,14 +1546,6 @@ struct TranslationView: View {
     }
 }
 
-private struct OutputScrollOffsetPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 private enum EditorFontScaleLevel: Int, CaseIterable {
     case extraSmall = 0
     case small = 1
@@ -1653,10 +1652,16 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
     let highlightedRange: NSRange?
     let centerOnHighlightIfNeeded: Bool
     let topAlignOnHighlightScroll: Bool
+    let isEditable: Bool
+    let onLockedTapInHighlight: () -> Void
     let onCursorLocationChanged: (Int) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onCursorLocationChanged: onCursorLocationChanged)
+        Coordinator(
+            text: $text,
+            onCursorLocationChanged: onCursorLocationChanged,
+            onLockedTapInHighlight: onLockedTapInHighlight
+        )
     }
 
     func makeUIView(context: Context) -> UITextView {
@@ -1672,6 +1677,7 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         textView.dataDetectorTypes = []
         textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         context.coordinator.attachTextView(textView)
+        context.coordinator.installTapRecognizerIfNeeded(on: textView)
         textView.inputAccessoryView = context.coordinator.makeKeyboardAccessoryToolbar()
         return textView
     }
@@ -1683,6 +1689,10 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         if uiView.font?.pointSize != fontSize {
             uiView.font = UIFont.systemFont(ofSize: fontSize)
         }
+        context.coordinator.updateLockedState(
+            isEditable: isEditable,
+            highlightedRange: highlightedRange
+        )
         context.coordinator.performProgrammaticUpdate {
             uiView.applyClutchHighlight(
                 highlightedRange,
@@ -1695,16 +1705,41 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         @Binding private var text: String
         private let onCursorLocationChanged: (Int) -> Void
+        private let onLockedTapInHighlight: () -> Void
         private weak var textView: UITextView?
         private var isProgrammaticUpdateInProgress: Bool = false
+        private var isEditable: Bool = true
+        private var highlightedRange: NSRange?
 
-        init(text: Binding<String>, onCursorLocationChanged: @escaping (Int) -> Void) {
+        init(
+            text: Binding<String>,
+            onCursorLocationChanged: @escaping (Int) -> Void,
+            onLockedTapInHighlight: @escaping () -> Void
+        ) {
             _text = text
             self.onCursorLocationChanged = onCursorLocationChanged
+            self.onLockedTapInHighlight = onLockedTapInHighlight
         }
 
         func attachTextView(_ textView: UITextView) {
             self.textView = textView
+        }
+
+        func installTapRecognizerIfNeeded(on textView: UITextView) {
+            guard textView.gestureRecognizers?.contains(where: { $0 is UITapGestureRecognizer && $0.delegate === self }) != true else {
+                return
+            }
+            let tap = UITapGestureRecognizer(target: self, action: #selector(handleLockedTap(_:)))
+            tap.cancelsTouchesInView = false
+            tap.delegate = self
+            textView.addGestureRecognizer(tap)
+        }
+
+        func updateLockedState(isEditable: Bool, highlightedRange: NSRange?) {
+            self.isEditable = isEditable
+            self.highlightedRange = highlightedRange
+            textView?.isEditable = isEditable
+            textView?.isSelectable = isEditable
         }
 
         func performProgrammaticUpdate(_ action: () -> Void) {
@@ -1748,6 +1783,32 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         @objc private func doneTapped() {
             textView?.resignFirstResponder()
         }
+
+        @objc private func handleLockedTap(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended else { return }
+            guard !isEditable else { return }
+            guard let textView else { return }
+            guard let highlightedRange, highlightedRange.length > 0 else { return }
+
+            let location = recognizer.location(in: textView)
+            let containerPoint = CGPoint(
+                x: location.x - textView.textContainerInset.left,
+                y: location.y - textView.textContainerInset.top + textView.contentOffset.y
+            )
+            let manager = textView.layoutManager
+            let container = textView.textContainer
+            let glyphIndex = manager.glyphIndex(for: containerPoint, in: container)
+            let charIndex = manager.characterIndexForGlyph(at: glyphIndex)
+            let highlightUpper = highlightedRange.location + highlightedRange.length
+            guard charIndex >= highlightedRange.location, charIndex <= highlightUpper else { return }
+            onLockedTapInHighlight()
+        }
+    }
+}
+
+extension IOSClutchSourceTextEditor.Coordinator: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        !isEditable
     }
 }
 
