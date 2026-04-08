@@ -45,12 +45,17 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
         let onDiagnosticEvent: (@Sendable (_ message: String) -> Void)?
     }
 
+    private enum RecoveryTimeoutError: Error {
+        case timedOut(stage: String)
+    }
+
     @Published private(set) var configuration: TranslationSession.Configuration?
     @Published private(set) var requestGeneration = UUID()
 
     private var pendingRequest: PendingRequest?
     private var pendingContinuation: CheckedContinuation<String?, Never>?
     private var lastSuccessfulSourceLanguageCode: String?
+    private static let translationCallTimeoutNanoseconds: UInt64 = 25_000_000_000
 
     private func log(_ message: String) {
     #if canImport(Logging)
@@ -157,13 +162,30 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
                     log("prepare-finished")
                 }
 
-                translated = try await translatePreservingSeparators(
-                    request.sourceText,
-                    using: session,
-                    onDiagnosticEvent: request.onDiagnosticEvent
-                )
+                translated = try await performWithTimeout(stage: "translate") {
+                    try await self.translatePreservingSeparators(
+                        request.sourceText,
+                        using: session,
+                        onDiagnosticEvent: request.onDiagnosticEvent
+                    )
+                }
             } catch {
-                if isTranslationServiceConnectionError(error) {
+                if isTranslationTimeoutError(error) {
+                    let stage = timeoutStage(from: error)
+                    request.onDiagnosticEvent?(
+                        "translation-framework-recovery: timeout stage=\(stage) retry=1"
+                    )
+                    log("timeout stage=\(stage)")
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+
+                    translated = try await performWithTimeout(stage: "translate(retry)") {
+                        try await self.translatePreservingSeparators(
+                            request.sourceText,
+                            using: session,
+                            onDiagnosticEvent: request.onDiagnosticEvent
+                        )
+                    }
+                } else if isTranslationServiceConnectionError(error) {
                     request.onDiagnosticEvent?(
                         "translation-framework-recovery: transient-service-connection-error stage=translate retry=1"
                     )
@@ -175,11 +197,13 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
                         log("prepare-finished(retry)")
                     }
 
-                    translated = try await translatePreservingSeparators(
-                        request.sourceText,
-                        using: session,
-                        onDiagnosticEvent: request.onDiagnosticEvent
-                    )
+                    translated = try await performWithTimeout(stage: "translate(retry)") {
+                        try await self.translatePreservingSeparators(
+                            request.sourceText,
+                            using: session,
+                            onDiagnosticEvent: request.onDiagnosticEvent
+                        )
+                    }
                 } else {
                     throw error
                 }
@@ -472,6 +496,39 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
         return message.contains("com.apple.translation.text")
             || message.contains("connection to service")
             || message.contains("translationd")
+    }
+
+    private func isTranslationTimeoutError(_ error: Error) -> Bool {
+        (error as? RecoveryTimeoutError) != nil
+    }
+
+    private func timeoutStage(from error: Error) -> String {
+        guard let timeoutError = error as? RecoveryTimeoutError else { return "unknown" }
+        switch timeoutError {
+        case .timedOut(let stage):
+            return stage
+        }
+    }
+
+    private func performWithTimeout<T: Sendable>(
+        stage: String,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let timeoutNanoseconds = Self.translationCallTimeoutNanoseconds
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                throw RecoveryTimeoutError.timedOut(stage: stage)
+            }
+            guard let first = try await group.next() else {
+                throw RecoveryTimeoutError.timedOut(stage: stage)
+            }
+            group.cancelAll()
+            return first
+        }
     }
 
     private func resolvePairAvailabilityStatus(
