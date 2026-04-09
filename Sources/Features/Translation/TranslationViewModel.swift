@@ -250,7 +250,9 @@ final class TranslationViewModel: ObservableObject {
 
     func handleSourceTextPasted(_ text: String) {
         let normalized = normalizedLineEndings(in: text)
+        let detection = HeuristicLanguageDetector.detectLanguage(text: normalized)
         inputText = normalized
+        detectedLanguageCode = detection.detectedLanguageCode
         refreshTFMenuAvailabilityIfNeeded()
     }
 

@@ -104,7 +104,9 @@ final class TranslationViewController: UIViewController {
     }
 
     @IBAction private func tapPaste(_ sender: UIButton) {
-        sourceTextView.text = UIPasteboard.general.string ?? ""
+        let pasted = UIPasteboard.general.string ?? ""
+        sourceTextView.text = pasted
+        viewModel.handleSourceTextPasted(pasted)
     }
 
     @IBAction private func tapCopy(_ sender: UIButton) {

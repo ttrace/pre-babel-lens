@@ -420,15 +420,11 @@ struct TranslationView: View {
                         }
                     }
                     .disabled(viewModel.isTargetLanguageSelectionDisabled(option.code))
+                    #if os(iOS)
+                    .opacity(viewModel.isTargetLanguageSelectionDisabled(option.code) ? 0.3 : 1.0)
+                    #endif
                     .help(viewModel.targetLanguageSelectionHelpText(for: option.code) ?? "")
                 }
-                #if os(iOS)
-                if viewModel.shouldShowIOSTFUnsupportedHint {
-                    Divider()
-                    Text(viewModel.iosTFUnsupportedHintMessage)
-                        .foregroundStyle(.secondary)
-                }
-                #endif
             } label: {
                 HStack(spacing: 4) {
                     Text(currentTargetLanguageLabel)
@@ -465,15 +461,11 @@ struct TranslationView: View {
                         }
                     }
                     .disabled(viewModel.isTargetLanguageSelectionDisabled(option.code))
+                    #if os(iOS)
+                    .opacity(viewModel.isTargetLanguageSelectionDisabled(option.code) ? 0.3 : 1.0)
+                    #endif
                     .help(viewModel.targetLanguageSelectionHelpText(for: option.code) ?? "")
                 }
-                #if os(iOS)
-                if viewModel.shouldShowIOSTFUnsupportedHint {
-                    Divider()
-                    Text(viewModel.iosTFUnsupportedHintMessage)
-                        .foregroundStyle(.secondary)
-                }
-                #endif
             } label: {
                 HStack(spacing: 4) {
                     Text(currentTargetLanguageLabel)
@@ -1578,6 +1570,7 @@ struct TranslationView: View {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
     }
+
     #endif
 
     private var isJapaneseLocale: Bool {
