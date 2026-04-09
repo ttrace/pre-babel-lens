@@ -8,7 +8,7 @@ import SwiftUI
     #endif
 #endif
 #if canImport(Translation)
-    import Translation
+    @preconcurrency import Translation
 #endif
 #if canImport(UIKit)
     import UIKit
@@ -129,6 +129,15 @@ struct TranslationView: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             #endif
+            #if canImport(Translation)
+            if let configuration = viewModel.tfMenuPreparationConfiguration {
+                TFMenuPreparationTaskHost(
+                    configuration: configuration,
+                    generation: viewModel.tfMenuPreparationGeneration,
+                    viewModel: viewModel
+                )
+            }
+            #endif
         }
         .onChange(of: viewModel.isTranslating) { _, isTranslating in
             if isTranslating {
@@ -149,7 +158,8 @@ struct TranslationView: View {
                 resetClutchSelection()
             }
         }
-        .onChange(of: viewModel.inputText) { _, _ in
+        .onChange(of: viewModel.inputText) { oldValue, newValue in
+            viewModel.handleSourceTextEdited(previousText: oldValue, currentText: newValue)
             guard clutchModeEnabled else { return }
             guard clutchCanTrackSourceSelection else {
                 resetClutchSelection()
@@ -394,21 +404,31 @@ struct TranslationView: View {
             Text("No target languages")
                 .foregroundStyle(.secondary)
         } else {
-            #if os(macOS)
             Menu {
                 translationModeToggleMenuItem
                 Divider()
                 ForEach(viewModel.targetLanguageOptions) { option in
                     Button {
-                        viewModel.targetLanguage = option.code
+                        viewModel.selectTargetLanguageFromMenu(option.code)
                     } label: {
+                        let baseLabel = option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle)
+                        let decoratedLabel = decoratedTargetLanguageMenuLabel(baseLabel, targetLanguageCode: option.code)
                         if option.code == viewModel.targetLanguage {
-                            Label(option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle), systemImage: "checkmark")
+                            Label(decoratedLabel, systemImage: "checkmark")
                         } else {
-                            Text(option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle))
+                            Text(decoratedLabel)
                         }
                     }
+                    .disabled(viewModel.isTargetLanguageSelectionDisabled(option.code))
+                    .help(viewModel.targetLanguageSelectionHelpText(for: option.code) ?? "")
                 }
+                #if os(iOS)
+                if viewModel.shouldShowIOSTFUnsupportedHint {
+                    Divider()
+                    Text(viewModel.iosTFUnsupportedHintMessage)
+                        .foregroundStyle(.secondary)
+                }
+                #endif
             } label: {
                 HStack(spacing: 4) {
                     Text(currentTargetLanguageLabel)
@@ -419,14 +439,6 @@ struct TranslationView: View {
                 }
             }
             .fixedSize(horizontal: true, vertical: false)
-            #else
-            Picker("Target", selection: $viewModel.targetLanguage) {
-                ForEach(viewModel.targetLanguageOptions) { option in
-                    Text(option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle)).tag(option.code)
-                }
-            }
-            .pickerStyle(.menu)
-            #endif
         }
     }
 
@@ -442,15 +454,26 @@ struct TranslationView: View {
                 Divider()
                 ForEach(viewModel.targetLanguageOptions) { option in
                     Button {
-                        viewModel.targetLanguage = option.code
+                        viewModel.selectTargetLanguageFromMenu(option.code)
                     } label: {
+                        let baseLabel = option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle)
+                        let decoratedLabel = decoratedTargetLanguageMenuLabel(baseLabel, targetLanguageCode: option.code)
                         if option.code == viewModel.targetLanguage {
-                            Label(option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle), systemImage: "checkmark")
+                            Label(decoratedLabel, systemImage: "checkmark")
                         } else {
-                            Text(option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle))
+                            Text(decoratedLabel)
                         }
                     }
+                    .disabled(viewModel.isTargetLanguageSelectionDisabled(option.code))
+                    .help(viewModel.targetLanguageSelectionHelpText(for: option.code) ?? "")
                 }
+                #if os(iOS)
+                if viewModel.shouldShowIOSTFUnsupportedHint {
+                    Divider()
+                    Text(viewModel.iosTFUnsupportedHintMessage)
+                        .foregroundStyle(.secondary)
+                }
+                #endif
             } label: {
                 HStack(spacing: 4) {
                     Text(currentTargetLanguageLabel)
@@ -466,6 +489,13 @@ struct TranslationView: View {
             .menuIndicator(.hidden)
             #endif
         }
+    }
+
+    private func decoratedTargetLanguageMenuLabel(_ baseLabel: String, targetLanguageCode: String) -> String {
+        if let mark = viewModel.tfMenuDownloadMark(for: targetLanguageCode) {
+            return "\(baseLabel) \(mark)"
+        }
+        return baseLabel
     }
 
     @ViewBuilder
@@ -615,7 +645,7 @@ struct TranslationView: View {
                 Button("Paste", action: pasteInputFromClipboard)
                     .buttonStyle(.bordered)
                 Button("Clear") {
-                    viewModel.inputText = ""
+                    viewModel.clearSourceTextAndResetLanguageState()
                 }
                 .buttonStyle(.bordered)
             }
@@ -1420,11 +1450,11 @@ struct TranslationView: View {
         #if os(macOS)
             let pasteboard = NSPasteboard.general
             if let text = pasteboard.string(forType: .string), !text.isEmpty {
-                viewModel.inputText = text
+                viewModel.handleSourceTextPasted(text)
             }
         #elseif canImport(UIKit)
             if let text = UIPasteboard.general.string, !text.isEmpty {
-                viewModel.inputText = text
+                viewModel.handleSourceTextPasted(text)
             }
         #endif
     }
@@ -1658,6 +1688,41 @@ private struct TranslationUnsafeRecoveryTaskHost: View {
             .translationTask(configuration) { session in
                 await unsafeRecoveryController.processPendingRequest(using: session)
             }
+    }
+}
+
+private struct TFMenuPreparationTaskHost: View {
+    let configuration: TranslationSession.Configuration
+    let generation: UUID
+    @ObservedObject var viewModel: TranslationViewModel
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .id(generation)
+            .translationTask(configuration) { session in
+                guard let targetCode = viewModel.tfMenuPreparationTargetCode(for: generation) else { return }
+                do {
+                    try await TFMenuPreparationRunner.prepare(using: session)
+                    viewModel.completeTFMenuPreparation(
+                        generation: generation,
+                        targetCode: targetCode,
+                        errorDescription: nil
+                    )
+                } catch {
+                    viewModel.completeTFMenuPreparation(
+                        generation: generation,
+                        targetCode: targetCode,
+                        errorDescription: (error as NSError).localizedDescription
+                    )
+                }
+            }
+    }
+}
+
+private final class TFMenuPreparationRunner {
+    static func prepare(using session: TranslationSession) async throws {
+        try await session.prepareTranslation()
     }
 }
 #endif

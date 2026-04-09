@@ -3,6 +3,8 @@ set -euo pipefail
 
 APP_NAME="PreBabelLens"
 SHOULD_OPEN_APP=1
+APPLE_LANGUAGE=""
+APPLE_LOCALE=""
 EXECUTABLE_PATH=".build/arm64-apple-macosx/debug/${APP_NAME}"
 BUNDLE_DIR=".build/AppBundle/${APP_NAME}.app"
 MACOS_DIR="${BUNDLE_DIR}/Contents/MacOS"
@@ -13,9 +15,51 @@ ICON_FILE_SOURCE="Assets/AppIcon.icns"
 ICON_FILE_NAME="AppIcon.icns"
 XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 
-if [[ "${1:-}" == "--no-open" ]]; then
-  SHOULD_OPEN_APP=0
-fi
+usage() {
+  cat <<'USAGE'
+Usage: scripts/launch_app_bundle.sh [options]
+
+Options:
+  --no-open           Build bundle only (do not launch app)
+  --lang <code>       Launch with AppleLanguages (e.g. en, ja, ko, zh-Hans, zh-Hant)
+  --locale <code>     Launch with AppleLocale (e.g. en_US, ja_JP, ko_KR, zh_CN, zh_TW)
+  --help              Show this help
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-open)
+      SHOULD_OPEN_APP=0
+      shift
+      ;;
+    --lang)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --lang requires a value"
+        exit 1
+      fi
+      APPLE_LANGUAGE="$2"
+      shift 2
+      ;;
+    --locale)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --locale requires a value"
+        exit 1
+      fi
+      APPLE_LOCALE="$2"
+      shift 2
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown option: $1"
+      usage
+      exit 1
+      ;;
+  esac
+done
 
 if [[ -d "${XCODE_DEVELOPER_DIR}" ]]; then
   echo "Building with Xcode toolchain..."
@@ -79,6 +123,9 @@ cat > "${INFO_PLIST}" <<'PLIST'
   <array>
     <string>en</string>
     <string>ja</string>
+    <string>ko</string>
+    <string>zh-Hans</string>
+    <string>zh-Hant</string>
   </array>
 </dict>
 </plist>
@@ -94,5 +141,18 @@ fi
 
 echo "Created app bundle: ${BUNDLE_DIR}"
 if [[ "${SHOULD_OPEN_APP}" == "1" ]]; then
-  open "${BUNDLE_DIR}"
+  OPEN_ARGS=()
+  if [[ -n "${APPLE_LANGUAGE}" ]]; then
+    OPEN_ARGS+=("-AppleLanguages" "(${APPLE_LANGUAGE})")
+  fi
+  if [[ -n "${APPLE_LOCALE}" ]]; then
+    OPEN_ARGS+=("-AppleLocale" "${APPLE_LOCALE}")
+  fi
+
+  if [[ ${#OPEN_ARGS[@]} -gt 0 ]]; then
+    echo "Launching with runtime args: ${OPEN_ARGS[*]}"
+    open "${BUNDLE_DIR}" --args "${OPEN_ARGS[@]}"
+  else
+    open "${BUNDLE_DIR}"
+  fi
 fi

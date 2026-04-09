@@ -1,0 +1,16 @@
+"menu.translate.top" = "翻譯";
+"menu.translate.action.translate" = "翻譯";
+"menu.translate.action.stop" = "停止";
+"menu.translate.target_language" = "目標語言";
+"menu.translate.switch_to_ai" = "切換為 AI 翻譯";
+"menu.translate.switch_to_standard" = "切換為標準翻譯";
+"menu.translate.ai_unavailable" = "此裝置不支援 AI 翻譯";
+"view.menu.compact" = "精簡";
+"view.menu.column" = "欄位顯示";
+"view.menu.size.actual" = "標準大小";
+"view.menu.size.zoom_in" = "放大";
+"view.menu.size.zoom_out" = "縮小";
+"tf.menu.download_hint" = "將下載語言套件。";
+"tf.menu.unsupported_pair_format" = "無法從 %@ 翻譯到 %@。";
+"tf.menu.source_language_fallback" = "來源語言";
+"tf.menu.target_language_fallback" = "目標語言";

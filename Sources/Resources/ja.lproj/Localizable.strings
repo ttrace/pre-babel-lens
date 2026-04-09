@@ -1,0 +1,16 @@
+"menu.translate.top" = "翻訳";
+"menu.translate.action.translate" = "翻訳";
+"menu.translate.action.stop" = "中断";
+"menu.translate.target_language" = "翻訳先言語";
+"menu.translate.switch_to_ai" = "AI翻訳に切り替え";
+"menu.translate.switch_to_standard" = "機械翻訳に切り替え";
+"menu.translate.ai_unavailable" = "AI翻訳はこのデバイスで利用できません";
+"view.menu.compact" = "コンパクト";
+"view.menu.column" = "カラム表示";
+"view.menu.size.actual" = "標準サイズ";
+"view.menu.size.zoom_in" = "拡大";
+"view.menu.size.zoom_out" = "縮小";
+"tf.menu.download_hint" = "言語パックをダウンロードします";
+"tf.menu.unsupported_pair_format" = "%@ から %@ には翻訳できません";
+"tf.menu.source_language_fallback" = "入力言語";
+"tf.menu.target_language_fallback" = "翻訳先言語";

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Translation)
+@preconcurrency import Translation
+#endif
 
 @MainActor
 final class TranslationViewModel: ObservableObject {
@@ -41,6 +44,13 @@ final class TranslationViewModel: ObservableObject {
         case completed
     }
 
+    enum TFMenuAvailabilityStatus: Equatable {
+        case unknown
+        case installed
+        case supported
+        case unsupported
+    }
+
     @Published var targetLanguage: String {
         didSet {
             persistTargetLanguageSelection()
@@ -75,6 +85,12 @@ final class TranslationViewModel: ObservableObject {
     @Published private(set) var targetLanguageOptions: [TargetLanguageOption] = []
     @Published private(set) var isAppleIntelligenceAvailable: Bool = false
     @Published private(set) var usesAppleIntelligenceTranslation: Bool = false
+    @Published private(set) var tfMenuAvailabilityByTarget: [String: TFMenuAvailabilityStatus] = [:]
+    @Published private(set) var tfMenuUnsupportedHintMessage: String?
+    #if canImport(Translation)
+    @Published private(set) var tfMenuPreparationConfiguration: TranslationSession.Configuration?
+    @Published private(set) var tfMenuPreparationGeneration: UUID = UUID()
+    #endif
 
     private let orchestrator: TranslationOrchestrator
     private let iOSEnginePolicy: IOSAdaptiveTranslationEnginePolicy?
@@ -93,6 +109,9 @@ final class TranslationViewModel: ObservableObject {
     private var activeMetricsRequestStartedAt: Date?
     private var activeMetricsSessionStartedAt: Date?
     private var activeMetricsFirstOutputAt: Date?
+    private var tfMenuAvailabilityTask: Task<Void, Never>?
+    private var tfMenuInputRefreshTask: Task<Void, Never>?
+    private var tfMenuPreparationTargetLanguageCode: String?
 
     init(
         orchestrator: TranslationOrchestrator,
@@ -129,6 +148,7 @@ final class TranslationViewModel: ObservableObject {
                 self.shouldActivateAppOnLaunch = true
             }
         }
+        refreshTFMenuAvailabilityIfNeeded()
     }
 
     func consumeLaunchActivationRequest() -> Bool {
@@ -158,6 +178,7 @@ final class TranslationViewModel: ObservableObject {
             usesAppleIntelligenceTranslation = false
             targetLanguageOptions = AppleIntelligenceLanguageCatalog.translationFrameworkLanguageOptions()
             normalizeTargetLanguageSelection()
+            refreshTFMenuAvailabilityIfNeeded()
             return
         }
 
@@ -167,6 +188,7 @@ final class TranslationViewModel: ObservableObject {
             ? AppleIntelligenceLanguageCatalog.supportedLanguageOptions()
             : AppleIntelligenceLanguageCatalog.translationFrameworkLanguageOptions()
         normalizeTargetLanguageSelection()
+        refreshTFMenuAvailabilityIfNeeded()
     }
 
     func switchToAppleIntelligenceTranslation() {
@@ -180,6 +202,98 @@ final class TranslationViewModel: ObservableObject {
         iOSEnginePolicy.setPreferredMode(.translationFramework)
         refreshEnginePreference()
     }
+
+    func tfMenuStatus(for targetLanguageCode: String) -> TFMenuAvailabilityStatus {
+        guard !usesAppleIntelligenceTranslation else { return .installed }
+        return tfMenuAvailabilityByTarget[targetLanguageCode] ?? .unknown
+    }
+
+    func tfMenuDownloadMark(for targetLanguageCode: String) -> String? {
+        tfMenuStatus(for: targetLanguageCode) == .supported ? "⬇︎" : nil
+    }
+
+    func isTargetLanguageSelectionDisabled(_ targetLanguageCode: String) -> Bool {
+        tfMenuStatus(for: targetLanguageCode) == .unsupported
+    }
+
+    func targetLanguageSelectionHelpText(for targetLanguageCode: String) -> String? {
+        switch tfMenuStatus(for: targetLanguageCode) {
+        case .supported:
+            return localizedDownloadHintText
+        case .unsupported:
+            return unsupportedPairHintText(for: targetLanguageCode)
+        case .unknown, .installed:
+            return nil
+        }
+    }
+
+    func selectTargetLanguageFromMenu(_ targetLanguageCode: String) {
+        switch tfMenuStatus(for: targetLanguageCode) {
+        case .unsupported:
+            tfMenuUnsupportedHintMessage = unsupportedPairHintText(for: targetLanguageCode)
+        case .supported:
+            targetLanguage = targetLanguageCode
+            tfMenuUnsupportedHintMessage = unsupportedPairHintTextIfNeeded()
+            #if canImport(Translation)
+            requestTFLanguagePackDownload(for: targetLanguageCode)
+            #endif
+        case .installed, .unknown:
+            targetLanguage = targetLanguageCode
+            tfMenuUnsupportedHintMessage = unsupportedPairHintTextIfNeeded()
+        }
+    }
+
+    func handleSourceTextEdited(previousText: String, currentText: String) {
+        guard previousText != currentText else { return }
+        scheduleTFMenuAvailabilityRefresh()
+    }
+
+    func handleSourceTextPasted(_ text: String) {
+        let normalized = normalizedLineEndings(in: text)
+        inputText = normalized
+        refreshTFMenuAvailabilityIfNeeded()
+    }
+
+    func clearSourceTextAndResetLanguageState() {
+        inputText = ""
+        detectedLanguageCode = ""
+        tfMenuUnsupportedHintMessage = nil
+        refreshTFMenuAvailabilityIfNeeded()
+    }
+
+    var shouldShowIOSTFUnsupportedHint: Bool {
+        !usesAppleIntelligenceTranslation
+            && tfMenuAvailabilityByTarget.values.contains(.unsupported)
+            && !(tfMenuUnsupportedHintMessage ?? "").isEmpty
+    }
+
+    var iosTFUnsupportedHintMessage: String {
+        tfMenuUnsupportedHintMessage ?? unsupportedPairHintText(for: targetLanguage)
+    }
+
+    #if canImport(Translation)
+    func tfMenuPreparationTargetCode(for generation: UUID) -> String? {
+        guard generation == tfMenuPreparationGeneration else { return nil }
+        guard tfMenuPreparationConfiguration != nil else { return nil }
+        return tfMenuPreparationTargetLanguageCode
+    }
+
+    func completeTFMenuPreparation(
+        generation: UUID,
+        targetCode: String,
+        errorDescription: String?
+    ) {
+        guard generation == tfMenuPreparationGeneration else { return }
+        if let errorDescription {
+            appendDeveloperLog("tf-menu: language-pack prepare failed target=\(targetCode) | \(errorDescription)")
+        } else {
+            appendDeveloperLog("tf-menu: language-pack prepared target=\(targetCode)")
+        }
+        tfMenuPreparationConfiguration = nil
+        tfMenuPreparationTargetLanguageCode = nil
+        refreshTFMenuAvailabilityIfNeeded()
+    }
+    #endif
 
     #if os(iOS)
     @discardableResult
@@ -307,6 +421,7 @@ final class TranslationViewModel: ObservableObject {
             status = .ready
             pendingTranslationRequestStartedAt = nil
             resetSessionMetricsState()
+            refreshTFMenuAvailabilityIfNeeded()
             return
         }
 
@@ -387,6 +502,7 @@ final class TranslationViewModel: ObservableObject {
             ambiguityHints = output.analysis.input.ambiguityHints
             engineName = output.analysis.engineName
             detectedLanguageCode = output.analysis.input.detectedLanguageCode ?? ""
+            refreshTFMenuAvailabilityIfNeeded()
             aiLanguageSupported = output.analysis.input.isDetectedLanguageSupportedByAppleIntelligence
             errorMessage = nil
             userAlert = nil
@@ -399,6 +515,7 @@ final class TranslationViewModel: ObservableObject {
         } catch let pipelineError as TranslationPipelineError {
             if let detected = pipelineError.detectedLanguageCode {
                 detectedLanguageCode = detected
+                refreshTFMenuAvailabilityIfNeeded()
                 aiLanguageSupported = false
             }
             if let alert = userAlert(for: pipelineError) {
@@ -771,6 +888,176 @@ final class TranslationViewModel: ObservableObject {
         text
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
+    }
+
+    private func refreshTFMenuAvailabilityIfNeeded() {
+        tfMenuAvailabilityTask?.cancel()
+
+        guard !usesAppleIntelligenceTranslation else {
+            tfMenuAvailabilityByTarget = [:]
+            tfMenuUnsupportedHintMessage = nil
+            return
+        }
+
+        guard !targetLanguageOptions.isEmpty else {
+            tfMenuAvailabilityByTarget = [:]
+            tfMenuUnsupportedHintMessage = nil
+            return
+        }
+
+        #if canImport(Translation)
+        let options = targetLanguageOptions
+        let sourceText = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detectedSourceCode = normalizedLanguageCode(detectedLanguageCode)
+
+        tfMenuAvailabilityTask = Task { [weak self] in
+            guard let self else { return }
+            var updated: [String: TFMenuAvailabilityStatus] = [:]
+
+            for option in options {
+                if Task.isCancelled { return }
+                let status = await Self.resolveTFMenuAvailabilityStatus(
+                    detectedSourceCode: detectedSourceCode,
+                    sourceText: sourceText,
+                    targetCode: option.code
+                )
+                updated[option.code] = status
+            }
+
+            if Task.isCancelled { return }
+            await MainActor.run {
+                self.tfMenuAvailabilityByTarget = updated
+                self.tfMenuUnsupportedHintMessage = self.unsupportedPairHintTextIfNeeded()
+            }
+        }
+        #else
+        tfMenuAvailabilityByTarget = Dictionary(
+            uniqueKeysWithValues: targetLanguageOptions.map { ($0.code, .installed) }
+        )
+        tfMenuUnsupportedHintMessage = nil
+        #endif
+    }
+
+    private func scheduleTFMenuAvailabilityRefresh() {
+        tfMenuInputRefreshTask?.cancel()
+        tfMenuInputRefreshTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            await MainActor.run {
+                self?.refreshTFMenuAvailabilityIfNeeded()
+            }
+        }
+    }
+
+    #if canImport(Translation)
+    nonisolated private static func resolveTFMenuAvailabilityStatus(
+        detectedSourceCode: String,
+        sourceText: String,
+        targetCode: String
+    ) async -> TFMenuAvailabilityStatus {
+        let availability = LanguageAvailability()
+        guard let targetLanguage = localeLanguage(from: targetCode) else {
+            return .unsupported
+        }
+
+        if !detectedSourceCode.isEmpty,
+           detectedSourceCode != "und",
+           let sourceLanguage = localeLanguage(from: detectedSourceCode)
+        {
+            let status = await availability.status(from: sourceLanguage, to: targetLanguage)
+            return tfMenuAvailabilityStatus(from: status)
+        }
+
+        guard !sourceText.isEmpty else {
+            return .unknown
+        }
+
+        do {
+            let status = try await availability.status(for: sourceText, to: targetLanguage)
+            return tfMenuAvailabilityStatus(from: status)
+        } catch {
+            return .unknown
+        }
+    }
+
+    nonisolated private static func tfMenuAvailabilityStatus(from status: LanguageAvailability.Status) -> TFMenuAvailabilityStatus {
+        switch status {
+        case .installed:
+            return .installed
+        case .supported:
+            return .supported
+        case .unsupported:
+            return .unsupported
+        @unknown default:
+            return .unknown
+        }
+    }
+
+    private func requestTFLanguagePackDownload(for targetLanguageCode: String) {
+        guard let targetLanguage = Self.localeLanguage(from: targetLanguageCode) else { return }
+
+        var configuration = TranslationSession.Configuration(
+            source: Self.localeLanguage(from: normalizedLanguageCode(detectedLanguageCode)),
+            target: targetLanguage
+        )
+        configuration.invalidate()
+        tfMenuPreparationTargetLanguageCode = targetLanguageCode
+        tfMenuPreparationGeneration = UUID()
+        tfMenuPreparationConfiguration = configuration
+        appendDeveloperLog("tf-menu: request language-pack download target=\(targetLanguageCode)")
+    }
+
+    nonisolated private static func localeLanguage(from rawCode: String) -> Locale.Language? {
+        let trimmed = rawCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return Locale.Language(identifier: trimmed)
+    }
+    #endif
+
+    private func unsupportedPairHintTextIfNeeded() -> String? {
+        guard let firstUnsupportedTarget = tfMenuAvailabilityByTarget.first(where: { $0.value == .unsupported })?.key else {
+            return nil
+        }
+        return unsupportedPairHintText(for: firstUnsupportedTarget)
+    }
+
+    private func unsupportedPairHintText(for targetLanguageCode: String) -> String {
+        let sourceName = sourceLanguageDisplayNameForMenu()
+        let targetName = targetLanguageDisplayNameForMenu(code: targetLanguageCode)
+        return String(
+            format: localized("tf.menu.unsupported_pair_format", defaultValue: "Cannot translate from %@ to %@."),
+            sourceName,
+            targetName
+        )
+    }
+
+    private var localizedDownloadHintText: String {
+        localized("tf.menu.download_hint", defaultValue: "Downloads the language pack.")
+    }
+
+    private func sourceLanguageDisplayNameForMenu() -> String {
+        let normalizedDetected = normalizedLanguageCode(detectedLanguageCode)
+        if !normalizedDetected.isEmpty, normalizedDetected != "und" {
+            return languageDisplayName(for: normalizedDetected)
+        }
+        return localized("tf.menu.source_language_fallback", defaultValue: "source language")
+    }
+
+    private func targetLanguageDisplayNameForMenu(code: String) -> String {
+        let normalized = normalizedLanguageCode(code)
+        guard !normalized.isEmpty, normalized != "und" else {
+            return localized("tf.menu.target_language_fallback", defaultValue: "target language")
+        }
+        return languageDisplayName(for: normalized)
+    }
+
+    private func languageDisplayName(for code: String) -> String {
+        let localeID = Locale.preferredLanguages.first ?? "en"
+        let locale = Locale(identifier: localeID)
+        return locale.localizedString(forLanguageCode: code) ?? code
+    }
+
+    private func localized(_ key: String, defaultValue: String) -> String {
+        NSLocalizedString(key, bundle: .module, value: defaultValue, comment: "")
     }
 
     private func makeStatusNotices(output: TranslationOutput, request: TranslationRequest) -> [StatusNotice] {

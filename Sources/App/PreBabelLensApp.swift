@@ -192,14 +192,22 @@ private struct TranslationMenuCommands: Commands {
 
                 ForEach(viewModel.targetLanguageOptions) { option in
                     Button {
-                        viewModel.targetLanguage = option.code
+                        viewModel.selectTargetLanguageFromMenu(option.code)
                     } label: {
-                        if option.code == viewModel.targetLanguage {
-                            Label(option.menuLabel(showCode: false, style: currentLabelStyle), systemImage: "checkmark")
+                        let baseLabel = option.menuLabel(showCode: false, style: currentLabelStyle)
+                        let decoratedLabel: String = if let mark = viewModel.tfMenuDownloadMark(for: option.code) {
+                            "\(baseLabel) \(mark)"
                         } else {
-                            Text(option.menuLabel(showCode: false, style: currentLabelStyle))
+                            baseLabel
+                        }
+                        if option.code == viewModel.targetLanguage {
+                            Label(decoratedLabel, systemImage: "checkmark")
+                        } else {
+                            Text(decoratedLabel)
                         }
                     }
+                    .disabled(viewModel.isTargetLanguageSelectionDisabled(option.code))
+                    .help(viewModel.targetLanguageSelectionHelpText(for: option.code) ?? "")
                 }
             }
         }

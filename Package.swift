@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "PreBabelLens",
+    defaultLocalization: "en",
     platforms: [
         .macOS("26.0"),
         .iOS("26.0")

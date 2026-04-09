@@ -1,0 +1,16 @@
+"menu.translate.top" = "翻译";
+"menu.translate.action.translate" = "翻译";
+"menu.translate.action.stop" = "停止";
+"menu.translate.target_language" = "目标语言";
+"menu.translate.switch_to_ai" = "切换到 AI 翻译";
+"menu.translate.switch_to_standard" = "切换到标准翻译";
+"menu.translate.ai_unavailable" = "此设备不支持 AI 翻译";
+"view.menu.compact" = "紧凑";
+"view.menu.column" = "分栏显示";
+"view.menu.size.actual" = "标准大小";
+"view.menu.size.zoom_in" = "放大";
+"view.menu.size.zoom_out" = "缩小";
+"tf.menu.download_hint" = "将下载语言包。";
+"tf.menu.unsupported_pair_format" = "无法从 %@ 翻译到 %@。";
+"tf.menu.source_language_fallback" = "源语言";
+"tf.menu.target_language_fallback" = "目标语言";

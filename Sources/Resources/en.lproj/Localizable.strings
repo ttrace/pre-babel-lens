@@ -1,0 +1,16 @@
+"menu.translate.top" = "Translate";
+"menu.translate.action.translate" = "Translate";
+"menu.translate.action.stop" = "Stop";
+"menu.translate.target_language" = "Target Language";
+"menu.translate.switch_to_ai" = "Switch to AI Translation";
+"menu.translate.switch_to_standard" = "Switch to Standard Translation";
+"menu.translate.ai_unavailable" = "AI translation unavailable on this device";
+"view.menu.compact" = "Compact";
+"view.menu.column" = "Column Layout";
+"view.menu.size.actual" = "Actual Size";
+"view.menu.size.zoom_in" = "Zoom In";
+"view.menu.size.zoom_out" = "Zoom Out";
+"tf.menu.download_hint" = "Downloads the language pack.";
+"tf.menu.unsupported_pair_format" = "Cannot translate from %@ to %@.";
+"tf.menu.source_language_fallback" = "source language";
+"tf.menu.target_language_fallback" = "target language";
