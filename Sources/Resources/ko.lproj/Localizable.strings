@@ -10,3 +10,7 @@
 "view.menu.size.actual" = "표준 크기";
 "view.menu.size.zoom_in" = "확대";
 "view.menu.size.zoom_out" = "축소";
+"tf.menu.download_hint" = "언어 팩을 다운로드합니다.";
+"tf.menu.unsupported_pair_format" = "%@에서 %@(으)로 번역할 수 없습니다.";
+"tf.menu.source_language_fallback" = "원문 언어";
+"tf.menu.target_language_fallback" = "대상 언어";

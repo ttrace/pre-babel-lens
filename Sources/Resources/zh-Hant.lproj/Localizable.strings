@@ -10,3 +10,7 @@
 "view.menu.size.actual" = "標準大小";
 "view.menu.size.zoom_in" = "放大";
 "view.menu.size.zoom_out" = "縮小";
+"tf.menu.download_hint" = "將下載語言套件。";
+"tf.menu.unsupported_pair_format" = "無法從 %@ 翻譯到 %@。";
+"tf.menu.source_language_fallback" = "來源語言";
+"tf.menu.target_language_fallback" = "目標語言";

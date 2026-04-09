@@ -122,27 +122,7 @@ struct PreBabelLens: App {
     }
 
     private static func launchInputText() -> String? {
-        let rawArgs = Array(ProcessInfo.processInfo.arguments.dropFirst())
-        let ignoredArgsRequiringValue: Set<String> = [
-            "-AppleLanguages",
-            "-AppleLocale"
-        ]
-
-        var args: [String] = []
-        var index = 0
-        while index < rawArgs.count {
-            let current = rawArgs[index]
-            if ignoredArgsRequiringValue.contains(current) {
-                index += 1
-                if index < rawArgs.count {
-                    index += 1
-                }
-                continue
-            }
-            args.append(current)
-            index += 1
-        }
-
+        let args = Array(ProcessInfo.processInfo.arguments.dropFirst())
         guard !args.isEmpty else { return nil }
 
         let combined = args.joined(separator: " ")
@@ -212,79 +192,75 @@ private struct TranslationMenuCommands: Commands {
 
                 ForEach(viewModel.targetLanguageOptions) { option in
                     Button {
-                        viewModel.targetLanguage = option.code
+                        viewModel.selectTargetLanguageFromMenu(option.code)
                     } label: {
-                        if option.code == viewModel.targetLanguage {
-                            Label(option.menuLabel(showCode: false, style: currentLabelStyle), systemImage: "checkmark")
+                        let baseLabel = option.menuLabel(showCode: false, style: currentLabelStyle)
+                        let decoratedLabel: String = if let mark = viewModel.tfMenuDownloadMark(for: option.code) {
+                            "\(baseLabel) \(mark)"
                         } else {
-                            Text(option.menuLabel(showCode: false, style: currentLabelStyle))
+                            baseLabel
+                        }
+                        if option.code == viewModel.targetLanguage {
+                            Label(decoratedLabel, systemImage: "checkmark")
+                        } else {
+                            Text(decoratedLabel)
                         }
                     }
+                    .disabled(viewModel.isTargetLanguageSelectionDisabled(option.code))
+                    .help(viewModel.targetLanguageSelectionHelpText(for: option.code) ?? "")
                 }
             }
         }
     }
 
     private var topMenuTitle: String {
-        localized("menu.translate.top", defaultValue: "Translate")
+        isJapaneseLocale ? "翻訳" : "Translate"
     }
 
     private var translateTitle: String {
-        localized("menu.translate.action.translate", defaultValue: "Translate")
+        isJapaneseLocale ? "翻訳" : "Translate"
     }
 
     private var stopTitle: String {
-        localized("menu.translate.action.stop", defaultValue: "Stop")
+        isJapaneseLocale ? "中断" : "Stop"
     }
 
     private var targetLanguageMenuTitle: String {
-        localized("menu.translate.target_language", defaultValue: "Target Language")
+        isJapaneseLocale ? "翻訳先言語" : "Target Language"
     }
 
     private var switchToAITitle: String {
-        localized("menu.translate.switch_to_ai", defaultValue: "Switch to AI Translation")
+        isJapaneseLocale ? "AI翻訳に切り替え" : "Switch to AI Translation"
     }
 
     private var switchToStandardTitle: String {
-        localized("menu.translate.switch_to_standard", defaultValue: "Switch to Standard Translation")
+        isJapaneseLocale ? "機械翻訳に切り替え" : "Switch to Standard Translation"
     }
 
     private var aiUnavailableTitle: String {
-        localized(
-            "menu.translate.ai_unavailable",
-            defaultValue: "AI translation unavailable on this device"
-        )
+        isJapaneseLocale ? "AI翻訳はこのデバイスで利用できません" : "AI translation unavailable on this device"
+    }
+
+    private var isJapaneseLocale: Bool {
+        Locale.preferredLanguages.first?.hasPrefix("ja") == true
     }
 
     private var currentLabelStyle: TargetLanguageOption.LabelStyle {
         viewModel.usesAppleIntelligenceTranslation ? .ai : .machine
     }
-
-    private func localized(_ key: String, defaultValue: String) -> String {
-        NSLocalizedString(key, bundle: .module, value: defaultValue, comment: "")
-    }
 }
 
 private struct TextSizeViewMenuCommands: Commands {
     @AppStorage("editorFontScaleLevel") private var editorFontScaleLevel: Int = 2
-    private let compactWindowMinWidth: CGFloat = 362
-    private let columnLayoutThresholdWidth: CGFloat = 1133
 
     var body: some Commands {
-        CommandGroup(after: .toolbar) {
-            Button {
-                toggleCompactColumnWindowWidth()
-            } label: {
-                Text(compactColumnToggleTitle)
-            }
-            .keyboardShortcut("c", modifiers: [.command, .option])
-
+        CommandGroup(after: .windowSize) {
             Divider()
 
             Button {
                 editorFontScaleLevel = 2
             } label: {
-                Label(resetTextSizeTitle, systemImage: "magnifyingglass")
+                Label(resetTextSizeTitle, systemImage: "textformat.size")
             }
             .keyboardShortcut("0", modifiers: [.command])
 
@@ -301,54 +277,23 @@ private struct TextSizeViewMenuCommands: Commands {
                 Label(decreaseTextSizeTitle, systemImage: "minus.magnifyingglass")
             }
             .keyboardShortcut("-", modifiers: [.command])
-
-            Divider()
         }
     }
 
     private var increaseTextSizeTitle: String {
-        localized("view.menu.size.zoom_in", defaultValue: "Zoom In")
+        isJapaneseLocale ? "拡大" : "Zoom In"
     }
 
     private var decreaseTextSizeTitle: String {
-        localized("view.menu.size.zoom_out", defaultValue: "Zoom Out")
+        isJapaneseLocale ? "縮小" : "Zoom Out"
     }
 
     private var resetTextSizeTitle: String {
-        localized("view.menu.size.actual", defaultValue: "Actual Size")
+        isJapaneseLocale ? "標準文字サイズ" : "Actual Size"
     }
 
-    private var compactColumnToggleTitle: String {
-        if isCompactWindowLayoutActive {
-            return localized("view.menu.column", defaultValue: "Column Layout")
-        }
-        return localized("view.menu.compact", defaultValue: "Compact")
-    }
-
-    private var isCompactWindowLayoutActive: Bool {
-        guard let window = activeWindow else { return false }
-        return window.contentLayoutRect.width < columnLayoutThresholdWidth
-    }
-
-    private var activeWindow: NSWindow? {
-        NSApp.keyWindow
-            ?? NSApp.mainWindow
-            ?? NSApp.windows.first(where: { $0.isVisible })
-            ?? NSApp.windows.first
-    }
-
-    private func toggleCompactColumnWindowWidth() {
-        guard let window = activeWindow else { return }
-        let targetWidth = isCompactWindowLayoutActive ? columnLayoutThresholdWidth : compactWindowMinWidth
-        let targetSize = NSSize(
-            width: targetWidth,
-            height: max(window.contentLayoutRect.height, 680)
-        )
-        window.setContentSize(targetSize)
-    }
-
-    private func localized(_ key: String, defaultValue: String) -> String {
-        NSLocalizedString(key, bundle: .module, value: defaultValue, comment: "")
+    private var isJapaneseLocale: Bool {
+        Locale.preferredLanguages.first?.hasPrefix("ja") == true
     }
 }
 
