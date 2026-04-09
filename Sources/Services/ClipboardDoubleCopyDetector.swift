@@ -34,8 +34,9 @@ final class ClipboardDoubleCopyDetector {
         guard pasteboard.changeCount != lastChangeCount else { return }
         lastChangeCount = pasteboard.changeCount
 
-        guard let copied = pasteboard.string(forType: .string)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
+        guard
+            let copied = pasteboard.string(forType: .string)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
             !copied.isEmpty
         else {
             return

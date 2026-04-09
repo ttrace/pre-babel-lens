@@ -289,14 +289,11 @@ private struct ViewMenuCommands: Commands {
     @AppStorage("editorFontScaleLevel") private var editorFontScaleLevel: Int = 2
 
     var body: some Commands {
-        CommandGroup(after: .windowSize) {
-            Button(compactModeTitle) {
-                applyWindowWidth(compactModeWidth)
+        CommandGroup(before: .toolbar) {
+            Button(compactToggleTitle) {
+                toggleCompactColumnMode()
             }
-
-            Button(columnModeTitle) {
-                applyWindowWidth(columnModeWidth)
-            }
+            .keyboardShortcut("c", modifiers: [.command, .option])
 
             Divider()
 
@@ -320,14 +317,12 @@ private struct ViewMenuCommands: Commands {
                 Label(decreaseTextSizeTitle, systemImage: "minus.magnifyingglass")
             }
             .keyboardShortcut("-", modifiers: [.command])
-
-            Divider()
         }
     }
 
     @MainActor
     private func applyWindowWidth(_ width: CGFloat) {
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible }) ?? NSApp.windows.first else {
+        guard let window = activeWindow else {
             return
         }
         var frame = window.frame
@@ -335,8 +330,39 @@ private struct ViewMenuCommands: Commands {
         window.setFrame(frame, display: true, animate: true)
     }
 
-    private var compactModeWidth: CGFloat { 920 }
+    @MainActor
+    private func toggleCompactColumnMode() {
+        if isCompactModeActive {
+            applyWindowWidth(columnModeWidth)
+        } else {
+            let compactWidth = activeWindow?.minSize.width ?? defaultCompactModeWidth
+            applyWindowWidth(compactWidth)
+        }
+    }
+
+    private var defaultCompactModeWidth: CGFloat { 920 }
     private var columnModeWidth: CGFloat { 1280 }
+    private var compactThresholdWidth: CGFloat { ((activeWindow?.minSize.width ?? defaultCompactModeWidth) + columnModeWidth) / 2 }
+
+    @MainActor
+    private var activeWindow: NSWindow? {
+        NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible }) ?? NSApp.windows.first
+    }
+
+    @MainActor
+    private var isCompactModeActive: Bool {
+        let currentWidth = NSApp.keyWindow?.frame.width
+            ?? NSApp.mainWindow?.frame.width
+            ?? NSApp.windows.first(where: { $0.isVisible })?.frame.width
+            ?? NSApp.windows.first?.frame.width
+            ?? columnModeWidth
+        return currentWidth <= compactThresholdWidth
+    }
+
+    @MainActor
+    private var compactToggleTitle: String {
+        isCompactModeActive ? columnModeTitle : compactModeTitle
+    }
 
     private var compactModeTitle: String {
         localized("view.menu.compact", defaultValue: "Compact")
@@ -364,6 +390,8 @@ private struct ViewMenuCommands: Commands {
 }
 
 private struct WindowAppearanceConfigurator: NSViewRepresentable {
+    private static var hasRelocatedFullScreenMenuItem = false
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
@@ -390,6 +418,41 @@ private struct WindowAppearanceConfigurator: NSViewRepresentable {
             blue: 0.82,
             alpha: 1.0
         )
+        relocateFullScreenMenuItemIfNeeded()
+    }
+
+    private func relocateFullScreenMenuItemIfNeeded() {
+        guard !Self.hasRelocatedFullScreenMenuItem else { return }
+        guard let mainMenu = NSApp.mainMenu else { return }
+
+        let fullScreenSelector = #selector(NSWindow.toggleFullScreen(_:))
+        guard
+            let sourceMenu = mainMenu.items.compactMap(\.submenu).first(where: { menu in
+                menu.items.contains(where: { $0.action == fullScreenSelector })
+            }),
+            let sourceIndex = sourceMenu.items.firstIndex(where: { $0.action == fullScreenSelector }),
+            let windowMenu = mainMenu.items.compactMap(\.submenu).first(where: { menu in
+                menu.items.contains(where: { $0.action == #selector(NSWindow.performMiniaturize(_:)) })
+            })
+        else {
+            return
+        }
+
+        if windowMenu.items.contains(where: { $0.action == fullScreenSelector }) {
+            Self.hasRelocatedFullScreenMenuItem = true
+            return
+        }
+
+        let fullScreenItem = sourceMenu.items[sourceIndex]
+        sourceMenu.removeItem(at: sourceIndex)
+
+        let insertIndex = windowMenu.items.firstIndex(where: { $0.action == #selector(NSApplication.arrangeInFront(_:)) }) ?? windowMenu.numberOfItems
+        if insertIndex > 0, windowMenu.items[insertIndex - 1].isSeparatorItem == false {
+            windowMenu.insertItem(NSMenuItem.separator(), at: insertIndex)
+        }
+        let adjustedIndex = min(insertIndex + 1, windowMenu.numberOfItems)
+        windowMenu.insertItem(fullScreenItem, at: adjustedIndex)
+        Self.hasRelocatedFullScreenMenuItem = true
     }
 }
 #endif

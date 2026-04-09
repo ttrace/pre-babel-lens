@@ -2114,7 +2114,10 @@ private final class DropAwareTextView: NSTextView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        SourceDropImport.resolveText(from: sender.draggingPasteboard) == nil ? [] : .copy
+        let pasteboard = sender.draggingPasteboard
+        let hasSupportedType = pasteboard.canReadObject(forClasses: [NSURL.self], options: nil)
+            || pasteboard.canReadObject(forClasses: [NSString.self], options: nil)
+        return hasSupportedType ? .copy : []
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {

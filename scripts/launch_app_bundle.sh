@@ -6,6 +6,7 @@ SHOULD_OPEN_APP=1
 APPLE_LANGUAGE=""
 APPLE_LOCALE=""
 EXECUTABLE_PATH=".build/arm64-apple-macosx/debug/${APP_NAME}"
+DEBUG_BUILD_DIR=".build/arm64-apple-macosx/debug"
 BUNDLE_DIR=".build/AppBundle/${APP_NAME}.app"
 MACOS_DIR="${BUNDLE_DIR}/Contents/MacOS"
 RESOURCES_DIR="${BUNDLE_DIR}/Contents/Resources"
@@ -74,6 +75,7 @@ if [[ ! -x "${EXECUTABLE_PATH}" ]]; then
   exit 1
 fi
 
+rm -rf "${BUNDLE_DIR}"
 mkdir -p "${MACOS_DIR}"
 mkdir -p "${RESOURCES_DIR}"
 cp "${EXECUTABLE_PATH}" "${MACOS_DIR}/${APP_NAME}"
@@ -137,6 +139,20 @@ fi
 
 if [[ -f "${ICON_FILE_SOURCE}" ]]; then
   cp "${ICON_FILE_SOURCE}" "${RESOURCES_DIR}/${ICON_FILE_NAME}"
+fi
+
+# Copy SwiftPM resource bundles so Bundle.module resolves correctly at runtime.
+if [[ -d "${DEBUG_BUILD_DIR}" ]]; then
+  while IFS= read -r -d '' resource_bundle; do
+    cp -R "${resource_bundle}" "${RESOURCES_DIR}/"
+  done < <(find "${DEBUG_BUILD_DIR}" -maxdepth 1 -type d -name "*.bundle" -print0)
+fi
+
+if command -v codesign >/dev/null 2>&1; then
+  # Re-sign the generated bundle to avoid taskgated "Invalid Signature" crashes.
+  codesign --force --deep --sign - "${BUNDLE_DIR}"
+else
+  echo "warning: codesign command not found; app may fail to launch due to invalid signature."
 fi
 
 echo "Created app bundle: ${BUNDLE_DIR}"

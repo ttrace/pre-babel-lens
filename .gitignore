@@ -12,3 +12,6 @@ dist/
 *.xcodeproj/xcuserdata/
 **/xcuserdata/
 *.xcuserstate
+
+# Local marketing assets
+App-Marketing/
