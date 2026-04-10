@@ -14,3 +14,8 @@
 "tf.menu.unsupported_pair_format" = "%@ から %@ には翻訳できません";
 "tf.menu.source_language_fallback" = "不明な言語";
 "tf.menu.target_language_fallback" = "翻訳先言語";
+"menu.file.import" = "読み込み...";
+"menu.file.import.panel.message" = "テキストを読み込むファイルを選択してください。";
+"menu.file.import.failed.title" = "このファイルは読み込めません";
+"menu.file.import.failed.message" = "このファイルには対応するテキストが含まれていません。";
+"menu.file.import.alert.ok" = "OK";

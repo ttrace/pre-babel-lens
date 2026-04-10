@@ -14,3 +14,8 @@
 "tf.menu.unsupported_pair_format" = "%@에서 %@(으)로 번역할 수 없습니다.";
 "tf.menu.source_language_fallback" = "감지되지 않은 언어";
 "tf.menu.target_language_fallback" = "대상 언어";
+"menu.file.import" = "가져오기...";
+"menu.file.import.panel.message" = "텍스트를 가져올 파일을 선택하세요.";
+"menu.file.import.failed.title" = "이 파일을 가져올 수 없습니다.";
+"menu.file.import.failed.message" = "이 파일에는 지원되는 텍스트 콘텐츠가 없습니다.";
+"menu.file.import.alert.ok" = "확인";

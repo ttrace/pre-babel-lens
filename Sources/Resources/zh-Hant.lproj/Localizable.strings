@@ -14,3 +14,8 @@
 "tf.menu.unsupported_pair_format" = "無法從 %@ 翻譯到 %@。";
 "tf.menu.source_language_fallback" = "未偵測到的語言";
 "tf.menu.target_language_fallback" = "目標語言";
+"menu.file.import" = "匯入...";
+"menu.file.import.panel.message" = "請選擇要匯入文字的檔案。";
+"menu.file.import.failed.title" = "無法匯入此檔案。";
+"menu.file.import.failed.message" = "此檔案不包含受支援的文字內容。";
+"menu.file.import.alert.ok" = "好";

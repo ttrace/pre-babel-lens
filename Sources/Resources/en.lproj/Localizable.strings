@@ -14,3 +14,8 @@
 "tf.menu.unsupported_pair_format" = "Cannot translate from %@ to %@.";
 "tf.menu.source_language_fallback" = "undetected language";
 "tf.menu.target_language_fallback" = "target language";
+"menu.file.import" = "Import...";
+"menu.file.import.panel.message" = "Select a file to import text.";
+"menu.file.import.failed.title" = "Unable to import this file.";
+"menu.file.import.failed.message" = "This file does not contain supported text content.";
+"menu.file.import.alert.ok" = "OK";
