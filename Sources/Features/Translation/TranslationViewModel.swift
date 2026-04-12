@@ -87,6 +87,10 @@ final class TranslationViewModel: ObservableObject {
     @Published private(set) var usesAppleIntelligenceTranslation: Bool = false
     @Published private(set) var tfMenuAvailabilityByTarget: [String: TFMenuAvailabilityStatus] = [:]
     @Published private(set) var tfMenuUnsupportedHintMessage: String?
+    #if os(macOS)
+    @Published var macImportLoadingHUDVisible: Bool = false
+    @Published var macImportHUDMessage: String?
+    #endif
     #if canImport(Translation)
     @Published private(set) var tfMenuPreparationConfiguration: TranslationSession.Configuration?
     @Published private(set) var tfMenuPreparationGeneration: UUID = UUID()
@@ -167,6 +171,23 @@ final class TranslationViewModel: ObservableObject {
         guard let text = URLLaunchParser.extractText(from: url) else { return }
         await handleExternalTriggerText(text, source: "url")
     }
+
+    #if os(macOS)
+    func setMacImportLoadingHUDVisible(_ visible: Bool) {
+        macImportLoadingHUDVisible = visible
+        if visible {
+            macImportHUDMessage = nil
+        }
+    }
+
+    func showMacImportHUDMessage(_ message: String) {
+        macImportHUDMessage = message
+    }
+
+    func clearMacImportHUDMessage() {
+        macImportHUDMessage = nil
+    }
+    #endif
 
     func handleDoubleCopyText(_ text: String) async {
         await handleExternalTriggerText(text, source: "double-copy")

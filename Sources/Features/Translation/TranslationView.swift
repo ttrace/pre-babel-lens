@@ -3,6 +3,14 @@ import SwiftUI
 #if os(macOS)
     import AppKit
     import CoreServices
+    import ImageIO
+    #if canImport(UniformTypeIdentifiers)
+        import UniformTypeIdentifiers
+    #endif
+    import Vision
+    #if canImport(VisionKit)
+        import VisionKit
+    #endif
     #if canImport(PDFKit)
         import PDFKit
     #endif
@@ -79,6 +87,9 @@ struct TranslationView: View {
     @State private var isClutchLayoutLocked: Bool = false
     #if os(macOS)
     @State private var macTopEdgeWheelMonitor: Any?
+    @State private var macImportLoading: Bool = false
+    @State private var macImportHUDMessage: String?
+    @State private var macImportHUDDismissTask: Task<Void, Never>?
     #endif
     #if os(iOS)
     @State private var pinchBaseFontScaleLevel: Int?
@@ -143,7 +154,7 @@ struct TranslationView: View {
             if let importToastMessage, importToastPlacement == .bottom, !isImportLoading {
                 VStack {
                     Spacer()
-                    importToast(text: importToastMessage)
+                    importHUDCapsule(text: importToastMessage)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 28)
                 }
@@ -187,6 +198,30 @@ struct TranslationView: View {
                 return
             }
         }
+        #if os(macOS)
+        .onReceive(NotificationCenter.default.publisher(for: .pblImportHUDLoadingChanged)) { notification in
+            guard let isLoading = notification.userInfo?[ImportHUDNotificationKeys.loading] as? Bool else { return }
+            macImportLoading = isLoading
+            if isLoading {
+                macImportHUDDismissTask?.cancel()
+                macImportHUDMessage = nil
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .pblImportHUDMessage)) { notification in
+            guard let message = notification.userInfo?[ImportHUDNotificationKeys.message] as? String else { return }
+            macImportHUDDismissTask?.cancel()
+            macImportHUDMessage = message
+            macImportHUDDismissTask = Task {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        macImportHUDMessage = nil
+                    }
+                }
+            }
+        }
+        #endif
         #if canImport(Translation)
         baseView
             .overlay {
@@ -735,12 +770,12 @@ struct TranslationView: View {
         .background(Color.clear)
         .overlay {
             if isImportLoading {
-                importToast(text: importLoadingToastTitle)
+                importHUDCapsule(text: importLoadingToastTitle)
                     .padding(.horizontal, 16)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     .allowsHitTesting(false)
             } else if let importToastMessage, importToastPlacement == .sourceFieldCenter {
-                importToast(text: importToastMessage)
+                importHUDCapsule(text: importToastMessage)
                     .padding(.horizontal, 16)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     .allowsHitTesting(false)
@@ -753,6 +788,14 @@ struct TranslationView: View {
             } else {
                 RoundedRectangle(cornerRadius: cardCornerRadius)
                     .fill(colorScheme == .dark ? Color.black.opacity(0.5) : Color.white.opacity(0.7))
+            }
+        }
+        .overlay {
+            if macImportLoading || macImportHUDMessage != nil {
+                macImportHUDCapsule(text: macImportLoading ? macImportLoadingTitle : (macImportHUDMessage ?? ""))
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .allowsHitTesting(false)
             }
         }
         #endif
@@ -1534,6 +1577,23 @@ struct TranslationView: View {
         NSLocalizedString(key, bundle: .main, value: defaultValue, comment: "")
     }
 
+    #if os(macOS)
+    private var macImportLoadingTitle: String {
+        localized("ui.import.loading", defaultValue: "Loading...")
+    }
+
+    @ViewBuilder
+    private func macImportHUDCapsule(text: String) -> some View {
+        Text(text)
+            .font(.system(size: 14, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            .fixedSize(horizontal: true, vertical: false)
+            .background(Color.black.opacity(0.7), in: Capsule())
+    }
+    #endif
+
     // #region MARK: Clipboard Actions
     private func copyOutputToClipboard() {
         #if os(macOS)
@@ -2149,7 +2209,7 @@ struct TranslationView: View {
     }
 
     @ViewBuilder
-    private func importToast(text: String) -> some View {
+    private func importHUDCapsule(text: String) -> some View {
         Text(text)
             .font(.system(size: 14, weight: .semibold, design: .rounded))
             .foregroundStyle(.white)
@@ -2819,10 +2879,21 @@ private final class DropAwareTextView: NSTextView {
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let droppedText = SourceDropImport.resolveText(from: sender.draggingPasteboard) else {
+        let pasteboard = sender.draggingPasteboard
+        let urls = (pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
+        let strings = (pasteboard.readObjects(forClasses: [NSString.self], options: nil) as? [String]) ?? []
+        guard !urls.isEmpty || !strings.isEmpty else {
             return false
         }
-        onDropResolvedText?(droppedText)
+
+        Task { [weak self] in
+            guard let droppedText = await SourceDropImport.resolveText(urls: urls, strings: strings) else {
+                return
+            }
+            await MainActor.run {
+                self?.onDropResolvedText?(droppedText)
+            }
+        }
         return true
     }
 
@@ -2873,34 +2944,60 @@ private final class DropAwareTextView: NSTextView {
 }
 
 enum SourceDropImport {
-    static func resolveText(from pasteboard: NSPasteboard) -> String? {
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
-            for url in urls {
-                if let text = loadText(from: url), !text.isEmpty {
-                    return text
-                }
+    static func resolveText(urls: [URL], strings: [String]) async -> String? {
+        await postImportLoading(true)
+        defer {
+            Task { @MainActor in
+                NotificationCenter.default.post(
+                    name: .pblImportHUDLoadingChanged,
+                    object: nil,
+                    userInfo: [ImportHUDNotificationKeys.loading: false]
+                )
             }
         }
 
-        if let strings = pasteboard.readObjects(forClasses: [NSString.self], options: nil) as? [String] {
-            for value in strings {
-                if let fileURL = fileURL(fromDroppedText: value),
-                   let text = loadText(from: fileURL),
-                   !text.isEmpty {
-                    return text
-                }
-            }
-            for value in strings {
-                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    return value
-                }
+        for url in urls {
+            if let text = await loadTextCore(from: url), !text.isEmpty {
+                return text
             }
         }
+
+        for value in strings {
+            if let fileURL = fileURL(fromDroppedText: value),
+               let text = await loadTextCore(from: fileURL),
+               !text.isEmpty {
+                return text
+            }
+        }
+        for value in strings {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return value
+            }
+        }
+        await postImportFailureMessage()
         return nil
     }
 
-    static func loadText(from fileURL: URL) -> String? {
+    static func loadText(from fileURL: URL) async -> String? {
+        await postImportLoading(true)
+        defer {
+            Task { @MainActor in
+                NotificationCenter.default.post(
+                    name: .pblImportHUDLoadingChanged,
+                    object: nil,
+                    userInfo: [ImportHUDNotificationKeys.loading: false]
+                )
+            }
+        }
+        let loaded = await loadTextCore(from: fileURL)
+        if loaded == nil {
+            await postImportFailureMessage()
+        }
+        return loaded
+    }
+
+    private static func loadTextCore(from fileURL: URL) async -> String? {
         let hasSecurityScope = fileURL.startAccessingSecurityScopedResource()
         defer {
             if hasSecurityScope {
@@ -2913,6 +3010,16 @@ enum SourceDropImport {
             return nil
         }
 
+        let lowercasedExtension = fileURL.pathExtension.lowercased()
+        if isImageFileExtension(lowercasedExtension) {
+            if let transcript = await extractTextFromImageWithImageAnalysis(fileURL), !transcript.isEmpty {
+                return transcript
+            }
+            if let recognized = extractTextFromImageWithVision(fileURL), !recognized.isEmpty {
+                return recognized
+            }
+        }
+
         var encoding: UInt = 0
         if let text = try? NSString(contentsOf: fileURL, usedEncoding: &encoding) {
             let resolved = (text as String).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2920,8 +3027,6 @@ enum SourceDropImport {
                 return text as String
             }
         }
-
-        let lowercasedExtension = fileURL.pathExtension.lowercased()
 
         if lowercasedExtension == "pdf", let extracted = extractTextFromPDF(fileURL), !extracted.isEmpty {
             return extracted
@@ -2938,6 +3043,132 @@ enum SourceDropImport {
         }
 
         return nil
+    }
+
+    private static func postImportLoading(_ isLoading: Bool) async {
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .pblImportHUDLoadingChanged,
+                object: nil,
+                userInfo: [ImportHUDNotificationKeys.loading: isLoading]
+            )
+        }
+    }
+
+    private static func postImportFailureMessage() async {
+        let message = NSLocalizedString(
+            "menu.file.import.failed.message",
+            bundle: .main,
+            value: "This file does not contain supported text content.",
+            comment: ""
+        )
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: .pblImportHUDMessage,
+                object: nil,
+                userInfo: [ImportHUDNotificationKeys.message: message]
+            )
+        }
+    }
+
+    private static func isImageFileExtension(_ fileExtension: String) -> Bool {
+        guard !fileExtension.isEmpty else { return false }
+        #if canImport(UniformTypeIdentifiers)
+        if let type = UTType(filenameExtension: fileExtension), type.conforms(to: .image) {
+            return true
+        }
+        #endif
+        return false
+    }
+
+    private static func extractTextFromImageWithImageAnalysis(_ fileURL: URL) async -> String? {
+        #if canImport(VisionKit)
+        guard #available(macOS 13.0, *) else { return nil }
+        do {
+            let analyzer = ImageAnalyzer()
+            var configuration = ImageAnalyzer.Configuration([.text])
+            let supportedLocales = ImageAnalyzer.supportedTextRecognitionLanguages
+            let orderedLocales = orderedTextRecognitionLocalesForOCR(supported: supportedLocales)
+            if orderedLocales.count > 1 {
+                configuration.locales = orderedLocales
+            }
+            let analysis = try await analyzer.analyze(
+                imageAt: fileURL,
+                orientation: .up,
+                configuration: configuration
+            )
+            let transcript = analysis.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            return transcript.isEmpty ? nil : transcript
+        } catch {
+            return nil
+        }
+        #else
+        return nil
+        #endif
+    }
+
+    private static func extractTextFromImageWithVision(_ fileURL: URL) -> String? {
+        guard let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
+            return nil
+        }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.automaticallyDetectsLanguage = true
+        request.usesLanguageCorrection = true
+        if let supportedLanguages = try? request.supportedRecognitionLanguages() {
+            let orderedLanguages = orderedTextRecognitionLocalesForOCR(supported: supportedLanguages)
+            // Restrict only when we have meaningful multilingual hints.
+            if orderedLanguages.count > 1 {
+                request.recognitionLanguages = orderedLanguages
+            }
+        }
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            return nil
+        }
+
+        guard let observations = request.results else { return nil }
+        let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+        let joined = lines.joined(separator: "\n")
+        let trimmed = joined.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func orderedTextRecognitionLocalesForOCR(supported: [String]) -> [String] {
+        let candidates = recognitionLanguageCandidatesForOCR()
+        var supportedByNormalizedCode: [String: String] = [:]
+        for language in supported {
+            let normalized = normalizeOCRLanguageCode(language)
+            if !normalized.isEmpty, supportedByNormalizedCode[normalized] == nil {
+                supportedByNormalizedCode[normalized] = language
+            }
+        }
+
+        let prioritized: [String] = candidates.compactMap { candidate -> String? in
+            let normalized = normalizeOCRLanguageCode(candidate)
+            guard !normalized.isEmpty else { return nil }
+            return supportedByNormalizedCode[normalized]
+        }
+
+        var seenNormalized: Set<String> = []
+        for language in prioritized {
+            let normalized = normalizeOCRLanguageCode(language)
+            if !normalized.isEmpty {
+                seenNormalized.insert(normalized)
+            }
+        }
+        let remaining = supported.filter { language in
+            let normalized = normalizeOCRLanguageCode(language)
+            guard !normalized.isEmpty else { return false }
+            return !seenNormalized.contains(normalized)
+        }
+        return prioritized + remaining
     }
 
     private static func extractTextWithAttributedString(from fileURL: URL) -> String? {
@@ -3062,6 +3293,82 @@ enum SourceDropImport {
         }
 
         return resultLines.joined(separator: "\n")
+    }
+
+    private static func recognitionLanguageCandidatesForOCR() -> [String] {
+        var candidates: [String] = []
+        let preferredLocaleMap = preferredLocaleByLanguageCode()
+
+        for preferred in Locale.preferredLanguages {
+            candidates.append(contentsOf: expandedOCRLanguageCandidates(
+                from: preferred,
+                preferredLocaleMap: preferredLocaleMap
+            ))
+        }
+
+        var seen: Set<String> = []
+        return candidates.filter { code in
+            guard !code.isEmpty else { return false }
+            if seen.contains(code) { return false }
+            seen.insert(code)
+            return true
+        }
+    }
+
+    private static func normalizeOCRLanguageCode(_ code: String) -> String {
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        let hyphenated = trimmed.replacingOccurrences(of: "_", with: "-")
+        guard hyphenated.lowercased() != "und" else { return "" }
+
+        let components = hyphenated.split(separator: "-").map(String.init)
+        guard let first = components.first, !first.isEmpty else { return "" }
+
+        var normalizedComponents: [String] = [first.lowercased()]
+        for component in components.dropFirst() {
+            if component.count == 4 {
+                normalizedComponents.append(component.prefix(1).uppercased() + component.dropFirst().lowercased())
+            } else if component.count == 2 || component.count == 3 {
+                normalizedComponents.append(component.uppercased())
+            } else {
+                normalizedComponents.append(component)
+            }
+        }
+        return normalizedComponents.joined(separator: "-")
+    }
+
+    private static func expandedOCRLanguageCandidates(
+        from rawCode: String,
+        preferredLocaleMap: [String: String]
+    ) -> [String] {
+        let normalized = normalizeOCRLanguageCode(rawCode)
+        guard !normalized.isEmpty else { return [] }
+
+        let base = String(normalized.split(separator: "-").first ?? "")
+        guard !base.isEmpty else { return [normalized] }
+
+        var expanded: [String] = []
+        if let locale = preferredLocaleMap[base], !locale.isEmpty {
+            expanded.append(locale)
+        }
+        expanded.append(normalized)
+        expanded.append(base)
+        return expanded
+    }
+
+    private static func preferredLocaleByLanguageCode() -> [String: String] {
+        var map: [String: String] = [:]
+        for preferred in Locale.preferredLanguages {
+            let normalized = normalizeOCRLanguageCode(preferred)
+            guard !normalized.isEmpty else { continue }
+            let base = String(normalized.split(separator: "-").first ?? "")
+            guard !base.isEmpty else { continue }
+            if map[base] == nil {
+                map[base] = normalized
+            }
+        }
+        return map
     }
 
     private static func shouldKeepLineBreak(afterRawLine rawLine: String) -> Bool {
@@ -3229,6 +3536,16 @@ enum SourceDropImport {
 }
 
 #endif
+
+enum ImportHUDNotificationKeys {
+    static let loading = "isLoading"
+    static let message = "message"
+}
+
+extension Notification.Name {
+    static let pblImportHUDLoadingChanged = Notification.Name("pbl.importHUD.loadingChanged")
+    static let pblImportHUDMessage = Notification.Name("pbl.importHUD.message")
+}
 
 private extension View {
     @ViewBuilder

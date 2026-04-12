@@ -1,6 +1,7 @@
 import SwiftUI
 #if os(macOS)
 import AppKit
+import UniformTypeIdentifiers
 #endif
 #if canImport(Translation)
 import Translation
@@ -74,6 +75,7 @@ struct PreBabelLens: App {
         mainScene
             .commands {
                 CommandGroup(replacing: .newItem) { }
+                FileMenuCommands(viewModel: viewModel)
                 TranslationMenuCommands(viewModel: viewModel)
                 ViewMenuCommands()
             }
@@ -192,6 +194,59 @@ struct PreBabelLens: App {
 }
 
 #if os(macOS)
+private struct FileMenuCommands: Commands {
+    @ObservedObject var viewModel: TranslationViewModel
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button(importTitle) {
+                importFromFileMenu()
+            }
+            .keyboardShortcut("o", modifiers: [.command])
+        }
+    }
+
+    private func importFromFileMenu() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = localized("menu.file.import.panel.message", defaultValue: "Select a file to import text.")
+        panel.allowedContentTypes = allowedImportTypes
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        Task(priority: .userInitiated) {
+            let imported = await SourceDropImport.loadText(from: url)
+            await MainActor.run {
+                guard let imported, !imported.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return
+                }
+                viewModel.handleSourceTextPasted(imported)
+            }
+        }
+    }
+
+    private var allowedImportTypes: [UTType] {
+        var types: [UTType] = [.plainText, .pdf, .image]
+        if let doc = UTType(filenameExtension: "doc") {
+            types.append(doc)
+        }
+        if let docx = UTType(filenameExtension: "docx") {
+            types.append(docx)
+        }
+        return types
+    }
+
+    private var importTitle: String {
+        localized("menu.file.import", defaultValue: "Import...")
+    }
+
+    private func localized(_ key: String, defaultValue: String) -> String {
+        NSLocalizedString(key, bundle: .main, value: defaultValue, comment: "")
+    }
+}
+
 private struct TranslationMenuCommands: Commands {
     @ObservedObject var viewModel: TranslationViewModel
 
