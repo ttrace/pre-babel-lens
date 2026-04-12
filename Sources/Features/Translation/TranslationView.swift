@@ -405,7 +405,7 @@ struct TranslationView: View {
     @ViewBuilder
     private var languagePicker: some View {
         if viewModel.targetLanguageOptions.isEmpty {
-            Text("No target languages")
+            Text(localized("ui.target.none_plural", defaultValue: "No target languages"))
                 .foregroundStyle(.secondary)
         } else {
             Menu {
@@ -445,7 +445,7 @@ struct TranslationView: View {
     @ViewBuilder
     private var inlineLanguageMenu: some View {
         if viewModel.targetLanguageOptions.isEmpty {
-            Text("No target")
+            Text(localized("ui.target.none", defaultValue: "No target"))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         } else {
@@ -499,8 +499,8 @@ struct TranslationView: View {
         if viewModel.isAppleIntelligenceAvailable {
             Button(
                 viewModel.usesAppleIntelligenceTranslation
-                    ? "機械翻訳に切り替え"
-                    : "AI翻訳に切り替え"
+                    ? localized("menu.translate.switch_to_standard", defaultValue: "Switch to Standard Translation")
+                    : localized("menu.translate.switch_to_ai", defaultValue: "Switch to AI Translation")
             ) {
                 if viewModel.usesAppleIntelligenceTranslation {
                     viewModel.switchToStandardTranslation()
@@ -509,7 +509,7 @@ struct TranslationView: View {
                 }
             }
         } else {
-            Button("AI翻訳はこのデバイスで利用できません") { }
+            Button(localized("menu.translate.ai_unavailable", defaultValue: "AI translation unavailable on this device")) { }
                 .disabled(true)
         }
     }
@@ -520,10 +520,10 @@ struct TranslationView: View {
             #if os(iOS)
             Toggle(autoTranslateToggleTitle, isOn: $autoTranslateImportedTextEnabled)
             #endif
-            Toggle("Clutch", isOn: $clutchModeEnabled)
-            Toggle("Developer Mode", isOn: $developerModeEnabled)
+            Toggle(localized("ui.settings.clutch", defaultValue: "Clutch"), isOn: $clutchModeEnabled)
+            Toggle(localized("ui.settings.developer_mode", defaultValue: "Developer Mode"), isOn: $developerModeEnabled)
             if developerModeEnabled {
-                Toggle("Verbose Console", isOn: $developerVerboseModeEnabled)
+                Toggle(localized("ui.settings.verbose_console", defaultValue: "Verbose Console"), isOn: $developerVerboseModeEnabled)
             }
         } label: {
             Image(systemName: "gearshape.fill")
@@ -539,8 +539,8 @@ struct TranslationView: View {
 
     @ViewBuilder
     private var developerPanels: some View {
-        GroupBox("Process Mode") {
-            Picker("Experiment", selection: $viewModel.experimentMode) {
+        GroupBox(localized("ui.dev.process_mode", defaultValue: "Process Mode")) {
+            Picker(localized("ui.dev.experiment", defaultValue: "Experiment"), selection: $viewModel.experimentMode) {
                 ForEach(TranslationExperimentMode.allCases) { mode in
                     Text(mode.displayName).tag(mode)
                 }
@@ -548,12 +548,12 @@ struct TranslationView: View {
             .pickerStyle(.menu)
         }
 
-        GroupBox("Glossary (source=target)") {
+        GroupBox(localized("ui.dev.glossary", defaultValue: "Glossary (source=target)")) {
             TextEditor(text: $viewModel.glossaryText)
                 .frame(minHeight: 80)
         }
 
-        GroupBox("Indexes") {
+        GroupBox(localized("ui.dev.indexes", defaultValue: "Indexes")) {
             ScrollView {
                 Text(indexesText)
                     .textSelection(.enabled)
@@ -575,9 +575,9 @@ struct TranslationView: View {
                 )
         } label: {
             HStack {
-                Text("Console")
+                Text(localized("ui.dev.console", defaultValue: "Console"))
                 Spacer()
-                Button("Clear") {
+                Button(localized("ui.action.clear", defaultValue: "Clear")) {
                     viewModel.clearDeveloperLogs()
                 }
                 .buttonStyle(.bordered)
@@ -633,14 +633,14 @@ struct TranslationView: View {
     private var sourceCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Source")
+                Text(localized("ui.section.source", defaultValue: "Source"))
                     .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
                 Spacer()
-                Button("Paste", action: pasteInputFromClipboard)
+                Button(localized("ui.action.paste", defaultValue: "Paste"), action: pasteInputFromClipboard)
                     .buttonStyle(.bordered)
-                Button("Clear") {
+                Button(localized("ui.action.clear", defaultValue: "Clear")) {
                     viewModel.clearSourceTextAndResetLanguageState()
                 }
                 .buttonStyle(.bordered)
@@ -716,7 +716,7 @@ struct TranslationView: View {
     private var outputContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Output")
+                Text(localized("ui.section.output", defaultValue: "Output"))
                     .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
@@ -732,10 +732,10 @@ struct TranslationView: View {
                         .font(.system(size: 16, weight: .semibold))
                 }
                 .buttonStyle(.bordered)
-                .help("Copy output")
+                .help(localized("ui.action.copy_output", defaultValue: "Copy output"))
                 .disabled(viewModel.translatedText.isEmpty)
 
-                Button("Translate") {
+                Button(localized("menu.translate.action.translate", defaultValue: "Translate")) {
                     #if os(iOS)
                     dismissKeyboard()
                     #endif
@@ -1374,7 +1374,7 @@ struct TranslationView: View {
                     Button {
                         viewModel.stopTranslation()
                     } label: {
-                        Label("Stop", systemImage: "stop.fill")
+                        Label(localized("menu.translate.action.stop", defaultValue: "Stop"), systemImage: "stop.fill")
                     }
                     .buttonStyle(.bordered)
                 }
@@ -1429,11 +1429,15 @@ struct TranslationView: View {
         if let selected = viewModel.targetLanguageOptions.first(where: { $0.code == viewModel.targetLanguage }) {
             return selected.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle)
         }
-        return "Target"
+        return localized("menu.translate.target_language", defaultValue: "Target Language")
     }
 
     private var currentLabelStyle: TargetLanguageOption.LabelStyle {
         viewModel.usesAppleIntelligenceTranslation ? .ai : .machine
+    }
+
+    private func localized(_ key: String, defaultValue: String) -> String {
+        NSLocalizedString(key, bundle: .main, value: defaultValue, comment: "")
     }
 
     // #region MARK: Clipboard Actions
@@ -1498,11 +1502,11 @@ struct TranslationView: View {
     }
 
     private var autoTranslateToggleTitle: String {
-        isJapaneseLocale ? "共有取り込み後に自動翻訳" : "Auto Translate After Import"
+        localized("ui.settings.auto_translate_after_import", defaultValue: "Auto Translate After Import")
     }
 
     private var sharedImportToastTitle: String {
-        isJapaneseLocale ? "共有テキストを取り込みました" : "Shared text imported."
+        localized("ui.import.shared_text_imported", defaultValue: "Shared text imported.")
     }
 
     private func dismissKeyboard() {
@@ -2179,7 +2183,7 @@ private final class DropAwareTextView: NSTextView {
     }
 }
 
-private enum SourceDropImport {
+enum SourceDropImport {
     static func resolveText(from pasteboard: NSPasteboard) -> String? {
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
             for url in urls {
@@ -2429,11 +2433,21 @@ private extension View {
                     return Alert(
                         title: Text(alert.title),
                         message: Text(alert.message),
-                        primaryButton: .default(Text(isJapaneseLocale ? "Settings を開く" : "Open Settings")) {
+                        primaryButton: .default(Text(NSLocalizedString(
+                            "ui.alert.open_settings",
+                            bundle: .main,
+                            value: "Open Settings",
+                            comment: ""
+                        ))) {
                             guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
                             UIApplication.shared.open(url)
                         },
-                        secondaryButton: .cancel(Text(isJapaneseLocale ? "閉じる" : "Close")) {
+                        secondaryButton: .cancel(Text(NSLocalizedString(
+                            "ui.action.close",
+                            bundle: .main,
+                            value: "Close",
+                            comment: ""
+                        ))) {
                             viewModel.dismissUserAlert()
                         }
                     )
@@ -2442,7 +2456,12 @@ private extension View {
                 return Alert(
                     title: Text(alert.title),
                     message: Text(alert.message),
-                    dismissButton: .default(Text(isJapaneseLocale ? "OK" : "OK")) {
+                    dismissButton: .default(Text(NSLocalizedString(
+                        "ui.action.ok",
+                        bundle: .main,
+                        value: "OK",
+                        comment: ""
+                    ))) {
                         viewModel.dismissUserAlert()
                     }
                 )
