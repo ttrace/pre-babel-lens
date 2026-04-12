@@ -1591,7 +1591,8 @@ struct TranslationView: View {
             }
             return
         }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = Self.normalizePDFSoftLineBreaksOnIOS(text)
+        let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             await MainActor.run {
                 showImportToast(localized("ui.import.ocr_failed", defaultValue: "Could not read text."))
@@ -1642,7 +1643,9 @@ struct TranslationView: View {
             guard let observations = request.results else { return nil }
             let lines = observations.compactMap { $0.topCandidates(1).first?.string }
             let joined = lines.joined(separator: "\n")
-            return joined.isEmpty ? nil : joined
+            guard !joined.isEmpty else { return nil }
+            let normalized = Self.normalizePDFSoftLineBreaksOnIOS(joined)
+            return normalized.isEmpty ? nil : normalized
         }
         return await task.value
     }
@@ -1832,7 +1835,9 @@ struct TranslationView: View {
         guard let observations = request.results else { return nil }
         let lines = observations.compactMap { $0.topCandidates(1).first?.string }
         let joined = lines.joined(separator: "\n")
-        return joined.isEmpty ? nil : joined
+        guard !joined.isEmpty else { return nil }
+        let normalized = Self.normalizePDFSoftLineBreaksOnIOS(joined)
+        return normalized.isEmpty ? nil : normalized
     }
 
     private func presentFileImporter() {
@@ -1878,7 +1883,7 @@ struct TranslationView: View {
             guard let page = document.page(at: pageIndex) else { continue }
             let text = (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {
-                pages.append(normalizePDFSoftLineBreaksOnIOS(text))
+                pages.append(Self.normalizePDFSoftLineBreaksOnIOS(text))
             }
         }
 
@@ -1889,11 +1894,11 @@ struct TranslationView: View {
         #endif
     }
 
-    private func normalizePDFSoftLineBreaksOnIOS(_ text: String) -> String {
+    private nonisolated static func normalizePDFSoftLineBreaksOnIOS(_ text: String) -> String {
         let lines = text.components(separatedBy: .newlines)
         guard !lines.isEmpty else { return text }
 
-        let headingDataLengthThreshold = shortHeadingDataThresholdOnIOS(for: lines)
+        let headingDataLengthThreshold = Self.shortHeadingDataThresholdOnIOS(for: lines)
         var resultLines: [String] = []
         resultLines.reserveCapacity(lines.count)
         var previousLineForcesBreak = true
@@ -1912,16 +1917,16 @@ struct TranslationView: View {
             }
 
             if !verticalWritingMode {
-                let verticalRunCount = consecutiveVerticalCandidateCountOnIOS(from: lineIndex, in: lines)
+                let verticalRunCount = Self.consecutiveVerticalCandidateCountOnIOS(from: lineIndex, in: lines)
                 if verticalRunCount >= 3 {
                     verticalWritingMode = true
                 }
             }
 
-            let isLineEndMarker = shouldKeepLineBreakOnIOS(afterRawLine: rawLine)
-            let isBulletLine = isBulletLikeLineOnIOS(trimmedLine)
-            let isNumericDataLine = isNumericDataOnlyLineOnIOS(trimmedLine)
-            let isShortHeadingDataLine = isShortHeadingOrDataLineOnIOS(
+            let isLineEndMarker = Self.shouldKeepLineBreakOnIOS(afterRawLine: rawLine)
+            let isBulletLine = Self.isBulletLikeLineOnIOS(trimmedLine)
+            let isNumericDataLine = Self.isNumericDataOnlyLineOnIOS(trimmedLine)
+            let isShortHeadingDataLine = Self.isShortHeadingOrDataLineOnIOS(
                 trimmedLine,
                 threshold: headingDataLengthThreshold
             )
@@ -1944,7 +1949,7 @@ struct TranslationView: View {
                 var last = resultLines.last,
                 !last.isEmpty
             {
-                if shouldJoinWithoutSpaceOnIOS(previousLine: last) {
+                if Self.shouldJoinWithoutSpaceOnIOS(previousLine: last) {
                     last += trimmedLine
                 } else {
                     last += " " + trimmedLine
@@ -1963,12 +1968,12 @@ struct TranslationView: View {
         return resultLines.joined(separator: "\n")
     }
 
-    private func shouldKeepLineBreakOnIOS(afterRawLine rawLine: String) -> Bool {
-        guard let trailing = lastNonWhitespaceCharacterOnIOS(in: rawLine) else { return false }
-        return isLineEndMarkerCharacterOnIOS(trailing)
+    private nonisolated static func shouldKeepLineBreakOnIOS(afterRawLine rawLine: String) -> Bool {
+        guard let trailing = Self.lastNonWhitespaceCharacterOnIOS(in: rawLine) else { return false }
+        return Self.isLineEndMarkerCharacterOnIOS(trailing)
     }
 
-    private func isLineEndMarkerCharacterOnIOS(_ character: Character) -> Bool {
+    private nonisolated static func isLineEndMarkerCharacterOnIOS(_ character: Character) -> Bool {
         switch character {
         case ".", "。", "!", "?", "！", "？",
              ")", "]", "}", "）", "］", "｝", "〉", "》", "」", "』", "】", "〙", "〗":
@@ -1978,7 +1983,7 @@ struct TranslationView: View {
         }
     }
 
-    private func isBulletLikeLineOnIOS(_ trimmedLine: String) -> Bool {
+    private nonisolated static func isBulletLikeLineOnIOS(_ trimmedLine: String) -> Bool {
         let leadingTrimmed = trimmedLine.trimmingCharacters(in: .whitespaces)
         guard !leadingTrimmed.isEmpty else { return false }
 
@@ -2002,12 +2007,12 @@ struct TranslationView: View {
         return false
     }
 
-    private func isNumericDataOnlyLineOnIOS(_ trimmedLine: String) -> Bool {
+    private nonisolated static func isNumericDataOnlyLineOnIOS(_ trimmedLine: String) -> Bool {
         guard !trimmedLine.isEmpty else { return false }
         return trimmedLine.range(of: #"^[0-9/:\s]+$"#, options: .regularExpression) != nil
     }
 
-    private func shortHeadingDataThresholdOnIOS(for lines: [String]) -> Int {
+    private nonisolated static func shortHeadingDataThresholdOnIOS(for lines: [String]) -> Int {
         let introMax = lines
             .prefix(30)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).count }
@@ -2015,17 +2020,17 @@ struct TranslationView: View {
         return introMax / 2
     }
 
-    private func isShortHeadingOrDataLineOnIOS(_ trimmedLine: String, threshold: Int) -> Bool {
+    private nonisolated static func isShortHeadingOrDataLineOnIOS(_ trimmedLine: String, threshold: Int) -> Bool {
         guard threshold > 0 else { return false }
         return !trimmedLine.isEmpty && trimmedLine.count <= threshold
     }
 
-    private func consecutiveVerticalCandidateCountOnIOS(from startIndex: Int, in allLines: [String]) -> Int {
+    private nonisolated static func consecutiveVerticalCandidateCountOnIOS(from startIndex: Int, in allLines: [String]) -> Int {
         var index = startIndex
         var count = 0
         while index < allLines.count {
             let trimmed = allLines[index].trimmingCharacters(in: .whitespacesAndNewlines)
-            if isSingleCJKVerticalCandidateOnIOS(trimmed) {
+            if Self.isSingleCJKVerticalCandidateOnIOS(trimmed) {
                 count += 1
                 index += 1
             } else {
@@ -2035,21 +2040,21 @@ struct TranslationView: View {
         return count
     }
 
-    private func isSingleCJKVerticalCandidateOnIOS(_ line: String) -> Bool {
+    private nonisolated static func isSingleCJKVerticalCandidateOnIOS(_ line: String) -> Bool {
         guard line.count == 1, let first = line.first else { return false }
-        return first.unicodeScalars.allSatisfy(isCJKExcludingHangulOnIOS)
+        return first.unicodeScalars.allSatisfy(Self.isCJKExcludingHangulOnIOS)
     }
 
-    private func shouldJoinWithoutSpaceOnIOS(previousLine: String) -> Bool {
-        guard let trailing = lastNonWhitespaceCharacterOnIOS(in: previousLine) else { return false }
-        return trailing.unicodeScalars.allSatisfy(isCJKExcludingHangulOnIOS)
+    private nonisolated static func shouldJoinWithoutSpaceOnIOS(previousLine: String) -> Bool {
+        guard let trailing = Self.lastNonWhitespaceCharacterOnIOS(in: previousLine) else { return false }
+        return trailing.unicodeScalars.allSatisfy(Self.isCJKExcludingHangulOnIOS)
     }
 
-    private func lastNonWhitespaceCharacterOnIOS(in text: String) -> Character? {
+    private nonisolated static func lastNonWhitespaceCharacterOnIOS(in text: String) -> Character? {
         text.last(where: { !$0.isWhitespace })
     }
 
-    private func isCJKExcludingHangulOnIOS(_ scalar: UnicodeScalar) -> Bool {
+    private nonisolated static func isCJKExcludingHangulOnIOS(_ scalar: UnicodeScalar) -> Bool {
         let value = scalar.value
 
         switch value {
