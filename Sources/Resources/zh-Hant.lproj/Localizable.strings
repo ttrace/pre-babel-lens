@@ -33,6 +33,10 @@
 "ui.section.source" = "來源文字";
 "ui.section.output" = "輸出";
 "ui.action.paste" = "貼上";
+"ui.action.import" = "匯入";
+"ui.import.files" = "檔案";
+"ui.import.album" = "相簿";
+"ui.import.ocr_failed" = "無法辨識文字。";
 "ui.action.clear" = "清除";
 "ui.action.copy_output" = "複製輸出";
 "ui.action.close" = "關閉";

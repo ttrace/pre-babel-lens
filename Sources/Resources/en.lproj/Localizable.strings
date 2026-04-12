@@ -33,6 +33,10 @@
 "ui.section.source" = "Source";
 "ui.section.output" = "Output";
 "ui.action.paste" = "Paste";
+"ui.action.import" = "Import";
+"ui.import.files" = "Files";
+"ui.import.album" = "Album";
+"ui.import.ocr_failed" = "Could not read text.";
 "ui.action.clear" = "Clear";
 "ui.action.copy_output" = "Copy output";
 "ui.action.close" = "Close";

@@ -13,6 +13,14 @@ import SwiftUI
 #if canImport(UIKit)
     import UIKit
 #endif
+#if os(iOS)
+    import PhotosUI
+    import UniformTypeIdentifiers
+    import Vision
+    #if canImport(PDFKit)
+        import PDFKit
+    #endif
+#endif
 
 struct TranslationView: View {
     #if os(iOS)
@@ -38,6 +46,11 @@ struct TranslationView: View {
     @AppStorage("editorFontScaleLevel") private var editorFontScaleLevel: Int = EditorFontScaleLevel.medium.rawValue
     @State private var importToastMessage: String?
     @State private var toastDismissTask: Task<Void, Never>?
+    #if os(iOS)
+    @State private var isFileImportPickerPresented: Bool = false
+    @State private var isPhotoPickerPresented: Bool = false
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    #endif
     @State private var isMacCompactLayoutActive: Bool = false
     @State private var isIOSDesktopLayoutActive: Bool = false
     @State private var isCompactStackedLayoutActive: Bool = false
@@ -183,6 +196,23 @@ struct TranslationView: View {
                 isJapaneseLocale: isJapaneseLocale,
                 handleSharedImportIfNeeded: handleSharedImportIfNeeded
             )
+            .fileImporter(
+                isPresented: $isFileImportPickerPresented,
+                allowedContentTypes: iOSImportContentTypes,
+                allowsMultipleSelection: false,
+                onCompletion: handleImportedDocumentResult
+            )
+            .photosPicker(
+                isPresented: $isPhotoPickerPresented,
+                selection: $selectedPhotoItem,
+                matching: .images
+            )
+            .onChange(of: selectedPhotoItem) { _, item in
+                guard let item else { return }
+                Task {
+                    await handlePickedPhotoItem(item)
+                }
+            }
             #else
             .translationViewLifecycleModifiers(
                 viewModel: viewModel,
@@ -210,6 +240,23 @@ struct TranslationView: View {
                     isJapaneseLocale: isJapaneseLocale,
                     handleSharedImportIfNeeded: handleSharedImportIfNeeded
                 )
+                .fileImporter(
+                    isPresented: $isFileImportPickerPresented,
+                    allowedContentTypes: iOSImportContentTypes,
+                    allowsMultipleSelection: false,
+                    onCompletion: handleImportedDocumentResult
+                )
+                .photosPicker(
+                    isPresented: $isPhotoPickerPresented,
+                    selection: $selectedPhotoItem,
+                    matching: .images
+                )
+                .onChange(of: selectedPhotoItem) { _, item in
+                    guard let item else { return }
+                    Task {
+                        await handlePickedPhotoItem(item)
+                    }
+                }
                 .toolbar {
                     ToolbarItemGroup(placement: .keyboard) {
                         Spacer()
@@ -638,6 +685,32 @@ struct TranslationView: View {
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
                 Spacer()
+                #if os(iOS)
+                Menu {
+                    Button {
+                        presentFileImporter()
+                    } label: {
+                        Label(
+                            localized("ui.import.files", defaultValue: "Files"),
+                            systemImage: isFileImportPickerPresented ? "folder.fill" : "folder"
+                        )
+                    }
+
+                    Button {
+                        presentPhotoPicker()
+                    } label: {
+                        Label(
+                            localized("ui.import.album", defaultValue: "Album"),
+                            systemImage: isPhotoPickerPresented ? "photo.on.rectangle.angled.fill" : "photo.on.rectangle.angled"
+                        )
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .menuOrder(.fixed)
+                .buttonStyle(.bordered)
+                .accessibilityLabel(localized("ui.action.import", defaultValue: "Import"))
+                #endif
                 Button(localized("ui.action.paste", defaultValue: "Paste"), action: pasteInputFromClipboard)
                     .buttonStyle(.bordered)
                 Button(localized("ui.action.clear", defaultValue: "Clear")) {
@@ -1469,6 +1542,543 @@ struct TranslationView: View {
     #endif
 
     #if os(iOS)
+    private var iOSImportContentTypes: [UTType] {
+        var types: [UTType] = [.pdf, .image]
+        if let txt = UTType(filenameExtension: "txt") {
+            types.append(txt)
+        }
+        if let doc = UTType(filenameExtension: "doc") {
+            types.append(doc)
+        }
+        if let docx = UTType(filenameExtension: "docx") {
+            types.append(docx)
+        }
+        return types
+    }
+
+    private func handleImportedDocumentResult(_ result: Result<[URL], Error>) {
+        switch result {
+        case let .success(urls):
+            guard let url = urls.first else { return }
+            Task { @MainActor in
+                guard let text = loadImportedText(from: url) else {
+                    showImportToast(localized("ui.import.ocr_failed", defaultValue: "Could not read text."))
+                    return
+                }
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    showImportToast(localized("ui.import.ocr_failed", defaultValue: "Could not read text."))
+                    return
+                }
+                viewModel.handleSourceTextPasted(text)
+            }
+        case .failure:
+            break
+        }
+    }
+
+    private func handlePickedPhotoItem(_ item: PhotosPickerItem) async {
+        defer {
+            Task { @MainActor in
+                selectedPhotoItem = nil
+            }
+        }
+
+        guard let data = try? await item.loadTransferable(type: Data.self) else { return }
+        guard let text = await recognizeTextInImageData(data) else {
+            await MainActor.run {
+                showImportToast(localized("ui.import.ocr_failed", defaultValue: "Could not read text."))
+            }
+            return
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            await MainActor.run {
+                showImportToast(localized("ui.import.ocr_failed", defaultValue: "Could not read text."))
+            }
+            return
+        }
+        await MainActor.run {
+            viewModel.handleSourceTextPasted(trimmed)
+        }
+    }
+
+    private func recognizeTextInImageData(_ data: Data) async -> String? {
+        let recognitionLanguages = await MainActor.run {
+            recognitionLanguageCandidatesForOCR()
+        }
+        let task = Task.detached(priority: .userInitiated) { () -> String? in
+            guard let image = UIImage(data: data) else { return nil }
+            guard let cgImage = image.cgImage else { return nil }
+
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            if let supportedLanguages = try? request.supportedRecognitionLanguages() {
+                var supportedByNormalizedCode: [String: String] = [:]
+                for language in supportedLanguages {
+                    let normalized = Self.normalizeOCRLanguageCode(language)
+                    if !normalized.isEmpty, supportedByNormalizedCode[normalized] == nil {
+                        supportedByNormalizedCode[normalized] = language
+                    }
+                }
+                let usable: [String] = recognitionLanguages.compactMap { candidate -> String? in
+                    let normalized = Self.normalizeOCRLanguageCode(candidate)
+                    guard !normalized.isEmpty else { return nil }
+                    return supportedByNormalizedCode[normalized]
+                }
+                if !usable.isEmpty {
+                    request.recognitionLanguages = usable
+                }
+            }
+
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                return nil
+            }
+
+            guard let observations = request.results else { return nil }
+            let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+            let joined = lines.joined(separator: "\n")
+            return joined.isEmpty ? nil : joined
+        }
+        return await task.value
+    }
+
+    private func recognitionLanguageCandidatesForOCR() -> [String] {
+        var candidates: [String] = []
+        let preferredLocaleMap = preferredLocaleByLanguageCode()
+
+        if let preferred = Locale.preferredLanguages.first {
+            candidates.append(contentsOf: expandedOCRLanguageCandidates(
+                from: preferred,
+                preferredLocaleMap: preferredLocaleMap
+            ))
+        }
+        if !viewModel.detectedLanguageCode.isEmpty {
+            candidates.append(contentsOf: expandedOCRLanguageCandidates(
+                from: viewModel.detectedLanguageCode,
+                preferredLocaleMap: preferredLocaleMap
+            ))
+        }
+        if !viewModel.targetLanguage.isEmpty {
+            candidates.append(contentsOf: expandedOCRLanguageCandidates(
+                from: viewModel.targetLanguage,
+                preferredLocaleMap: preferredLocaleMap
+            ))
+        }
+
+        var seen: Set<String> = []
+        return candidates.filter { code in
+            guard !code.isEmpty else { return false }
+            if seen.contains(code) { return false }
+            seen.insert(code)
+            return true
+        }
+    }
+
+    private func normalizedOCRLanguageCode(_ code: String) -> String {
+        Self.normalizeOCRLanguageCode(code)
+    }
+
+    private nonisolated static func normalizeOCRLanguageCode(_ code: String) -> String {
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        let hyphenated = trimmed.replacingOccurrences(of: "_", with: "-")
+        guard hyphenated.lowercased() != "und" else { return "" }
+
+        let components = hyphenated.split(separator: "-").map(String.init)
+        guard let first = components.first, !first.isEmpty else { return "" }
+
+        var normalizedComponents: [String] = [first.lowercased()]
+        for component in components.dropFirst() {
+            if component.count == 4 {
+                normalizedComponents.append(component.prefix(1).uppercased() + component.dropFirst().lowercased())
+            } else if component.count == 2 || component.count == 3 {
+                normalizedComponents.append(component.uppercased())
+            } else {
+                normalizedComponents.append(component)
+            }
+        }
+
+        return normalizedComponents.joined(separator: "-")
+    }
+
+    private func expandedOCRLanguageCandidates(
+        from rawCode: String,
+        preferredLocaleMap: [String: String]
+    ) -> [String] {
+        let normalized = normalizedOCRLanguageCode(rawCode)
+        guard !normalized.isEmpty else { return [] }
+
+        let base = String(normalized.split(separator: "-").first ?? "")
+        guard !base.isEmpty else { return [normalized] }
+
+        var expanded: [String] = []
+        if let locale = preferredLocaleMap[base], !locale.isEmpty {
+            expanded.append(locale)
+        }
+        expanded.append(normalized)
+        expanded.append(base)
+        return expanded
+    }
+
+    private func preferredLocaleByLanguageCode() -> [String: String] {
+        var map: [String: String] = [:]
+        for preferred in Locale.preferredLanguages {
+            let normalized = normalizedOCRLanguageCode(preferred)
+            guard !normalized.isEmpty else { continue }
+            let base = String(normalized.split(separator: "-").first ?? "")
+            guard !base.isEmpty else { continue }
+            if map[base] == nil {
+                map[base] = normalized
+            }
+        }
+        return map
+    }
+
+    private func loadImportedText(from fileURL: URL) -> String? {
+        let hasSecurityScope = fileURL.startAccessingSecurityScopedResource()
+        defer {
+            if hasSecurityScope {
+                fileURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            return nil
+        }
+
+        let lowercasedExtension = fileURL.pathExtension.lowercased()
+
+        if isImageExtension(lowercasedExtension),
+           let data = try? Data(contentsOf: fileURL) {
+            return extractTextFromImageDataOnIOS(data)
+        }
+
+        if lowercasedExtension == "pdf",
+           let extracted = extractTextFromPDFOnIOS(fileURL),
+           !extracted.isEmpty {
+            return extracted
+        }
+
+        if ["doc", "docx", "pages"].contains(lowercasedExtension),
+           let extracted = extractTextWithAttributedStringOnIOS(from: fileURL),
+           !extracted.isEmpty {
+            return extracted
+        }
+
+        if let data = try? Data(contentsOf: fileURL) {
+            if let utf8 = String(data: data, encoding: .utf8),
+               !utf8.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return utf8
+            }
+            if let utf16 = String(data: data, encoding: .utf16),
+               !utf16.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return utf16
+            }
+            if let shiftJIS = String(data: data, encoding: .shiftJIS),
+               !shiftJIS.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return shiftJIS
+            }
+        }
+
+        return nil
+    }
+
+    private func isImageExtension(_ fileExtension: String) -> Bool {
+        guard !fileExtension.isEmpty else { return false }
+        guard let type = UTType(filenameExtension: fileExtension) else { return false }
+        return type.conforms(to: .image)
+    }
+
+    private func extractTextFromImageDataOnIOS(_ data: Data) -> String? {
+        guard let image = UIImage(data: data) else { return nil }
+        guard let cgImage = image.cgImage else { return nil }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        if let supportedLanguages = try? request.supportedRecognitionLanguages() {
+            let candidates = recognitionLanguageCandidatesForOCR()
+            var supportedByNormalizedCode: [String: String] = [:]
+            for language in supportedLanguages {
+                let normalized = normalizedOCRLanguageCode(language)
+                if !normalized.isEmpty, supportedByNormalizedCode[normalized] == nil {
+                    supportedByNormalizedCode[normalized] = language
+                }
+            }
+            let usable: [String] = candidates.compactMap { candidate -> String? in
+                let normalized = normalizedOCRLanguageCode(candidate)
+                guard !normalized.isEmpty else { return nil }
+                return supportedByNormalizedCode[normalized]
+            }
+            if !usable.isEmpty {
+                request.recognitionLanguages = usable
+            }
+        }
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            return nil
+        }
+
+        guard let observations = request.results else { return nil }
+        let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+        let joined = lines.joined(separator: "\n")
+        return joined.isEmpty ? nil : joined
+    }
+
+    private func presentFileImporter() {
+        // Present after the menu dismissal animation finishes to avoid
+        // UIKit reparenting warnings when launching pickers from Menu actions.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            isPhotoPickerPresented = false
+            isFileImportPickerPresented = true
+        }
+    }
+
+    private func presentPhotoPicker() {
+        // Present after the menu dismissal animation finishes to avoid
+        // UIKit reparenting warnings when launching pickers from Menu actions.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            isFileImportPickerPresented = false
+            isPhotoPickerPresented = true
+        }
+    }
+
+    private func extractTextWithAttributedStringOnIOS(from fileURL: URL) -> String? {
+        if let attributed = try? NSAttributedString(
+            url: fileURL,
+            options: [:],
+            documentAttributes: nil
+        ) {
+            let text = attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                return text
+            }
+        }
+        return nil
+    }
+
+    private func extractTextFromPDFOnIOS(_ fileURL: URL) -> String? {
+        #if canImport(PDFKit)
+        guard let document = PDFDocument(url: fileURL) else { return nil }
+
+        var pages: [String] = []
+        pages.reserveCapacity(document.pageCount)
+
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+            let text = (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                pages.append(normalizePDFSoftLineBreaksOnIOS(text))
+            }
+        }
+
+        let combined = pages.joined(separator: "\n\n")
+        return combined.isEmpty ? nil : combined
+        #else
+        return nil
+        #endif
+    }
+
+    private func normalizePDFSoftLineBreaksOnIOS(_ text: String) -> String {
+        let lines = text.components(separatedBy: .newlines)
+        guard !lines.isEmpty else { return text }
+
+        let headingDataLengthThreshold = shortHeadingDataThresholdOnIOS(for: lines)
+        var resultLines: [String] = []
+        resultLines.reserveCapacity(lines.count)
+        var previousLineForcesBreak = true
+        var verticalWritingMode = false
+
+        for (lineIndex, rawLine) in lines.enumerated() {
+            let trimmedLine = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if trimmedLine.isEmpty {
+                if !resultLines.isEmpty, resultLines.last != "" {
+                    resultLines.append("")
+                }
+                previousLineForcesBreak = true
+                verticalWritingMode = false
+                continue
+            }
+
+            if !verticalWritingMode {
+                let verticalRunCount = consecutiveVerticalCandidateCountOnIOS(from: lineIndex, in: lines)
+                if verticalRunCount >= 3 {
+                    verticalWritingMode = true
+                }
+            }
+
+            let isLineEndMarker = shouldKeepLineBreakOnIOS(afterRawLine: rawLine)
+            let isBulletLine = isBulletLikeLineOnIOS(trimmedLine)
+            let isNumericDataLine = isNumericDataOnlyLineOnIOS(trimmedLine)
+            let isShortHeadingDataLine = isShortHeadingOrDataLineOnIOS(
+                trimmedLine,
+                threshold: headingDataLengthThreshold
+            )
+            let blocksIncomingSoftJoin = isBulletLine || isNumericDataLine
+            let blocksOutgoingSoftJoin = isBulletLine || isNumericDataLine || isShortHeadingDataLine
+
+            if verticalWritingMode {
+                if
+                    var last = resultLines.last,
+                    !last.isEmpty
+                {
+                    last += trimmedLine
+                    resultLines[resultLines.count - 1] = last
+                } else {
+                    resultLines.append(trimmedLine)
+                }
+            } else if
+                !previousLineForcesBreak,
+                !blocksIncomingSoftJoin,
+                var last = resultLines.last,
+                !last.isEmpty
+            {
+                if shouldJoinWithoutSpaceOnIOS(previousLine: last) {
+                    last += trimmedLine
+                } else {
+                    last += " " + trimmedLine
+                }
+                resultLines[resultLines.count - 1] = last
+            } else {
+                resultLines.append(trimmedLine)
+            }
+
+            if isLineEndMarker {
+                verticalWritingMode = false
+            }
+            previousLineForcesBreak = isLineEndMarker || blocksOutgoingSoftJoin
+        }
+
+        return resultLines.joined(separator: "\n")
+    }
+
+    private func shouldKeepLineBreakOnIOS(afterRawLine rawLine: String) -> Bool {
+        guard let trailing = lastNonWhitespaceCharacterOnIOS(in: rawLine) else { return false }
+        return isLineEndMarkerCharacterOnIOS(trailing)
+    }
+
+    private func isLineEndMarkerCharacterOnIOS(_ character: Character) -> Bool {
+        switch character {
+        case ".", "。", "!", "?", "！", "？",
+             ")", "]", "}", "）", "］", "｝", "〉", "》", "」", "』", "】", "〙", "〗":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func isBulletLikeLineOnIOS(_ trimmedLine: String) -> Bool {
+        let leadingTrimmed = trimmedLine.trimmingCharacters(in: .whitespaces)
+        guard !leadingTrimmed.isEmpty else { return false }
+
+        if let first = leadingTrimmed.first, ["・", "＊", "ー", "-"].contains(first) {
+            return true
+        }
+
+        var index = leadingTrimmed.startIndex
+        var digitCount = 0
+        while index < leadingTrimmed.endIndex, leadingTrimmed[index].isNumber {
+            digitCount += 1
+            index = leadingTrimmed.index(after: index)
+        }
+
+        if digitCount > 0, index < leadingTrimmed.endIndex {
+            let delimiter = leadingTrimmed[index]
+            if delimiter == "." || delimiter == ":" || delimiter == ";" {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func isNumericDataOnlyLineOnIOS(_ trimmedLine: String) -> Bool {
+        guard !trimmedLine.isEmpty else { return false }
+        return trimmedLine.range(of: #"^[0-9/:\s]+$"#, options: .regularExpression) != nil
+    }
+
+    private func shortHeadingDataThresholdOnIOS(for lines: [String]) -> Int {
+        let introMax = lines
+            .prefix(30)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).count }
+            .max() ?? 0
+        return introMax / 2
+    }
+
+    private func isShortHeadingOrDataLineOnIOS(_ trimmedLine: String, threshold: Int) -> Bool {
+        guard threshold > 0 else { return false }
+        return !trimmedLine.isEmpty && trimmedLine.count <= threshold
+    }
+
+    private func consecutiveVerticalCandidateCountOnIOS(from startIndex: Int, in allLines: [String]) -> Int {
+        var index = startIndex
+        var count = 0
+        while index < allLines.count {
+            let trimmed = allLines[index].trimmingCharacters(in: .whitespacesAndNewlines)
+            if isSingleCJKVerticalCandidateOnIOS(trimmed) {
+                count += 1
+                index += 1
+            } else {
+                break
+            }
+        }
+        return count
+    }
+
+    private func isSingleCJKVerticalCandidateOnIOS(_ line: String) -> Bool {
+        guard line.count == 1, let first = line.first else { return false }
+        return first.unicodeScalars.allSatisfy(isCJKExcludingHangulOnIOS)
+    }
+
+    private func shouldJoinWithoutSpaceOnIOS(previousLine: String) -> Bool {
+        guard let trailing = lastNonWhitespaceCharacterOnIOS(in: previousLine) else { return false }
+        return trailing.unicodeScalars.allSatisfy(isCJKExcludingHangulOnIOS)
+    }
+
+    private func lastNonWhitespaceCharacterOnIOS(in text: String) -> Character? {
+        text.last(where: { !$0.isWhitespace })
+    }
+
+    private func isCJKExcludingHangulOnIOS(_ scalar: UnicodeScalar) -> Bool {
+        let value = scalar.value
+
+        switch value {
+        case 0x1100...0x11FF, 0x3130...0x318F, 0xA960...0xA97F, 0xAC00...0xD7AF, 0xD7B0...0xD7FF:
+            return false
+        default:
+            break
+        }
+
+        switch value {
+        case 0x2E80...0x2EFF,
+             0x3000...0x303F,
+             0x3040...0x30FF,
+             0x31F0...0x31FF,
+             0x3400...0x4DBF,
+             0x4E00...0x9FFF,
+             0xF900...0xFAFF,
+             0x20000...0x2A6DF,
+             0x2A700...0x2B73F,
+             0x2B740...0x2B81F,
+             0x2B820...0x2CEAF,
+             0x2CEB0...0x2EBEF,
+             0x30000...0x3134F:
+            return true
+        default:
+            return false
+        }
+    }
+
     @ViewBuilder
     private func importToast(text: String) -> some View {
         Text(text)
@@ -1488,8 +2098,12 @@ struct TranslationView: View {
     }
 
     private func showImportToast() {
+        showImportToast(sharedImportToastTitle)
+    }
+
+    private func showImportToast(_ message: String) {
         toastDismissTask?.cancel()
-        importToastMessage = sharedImportToastTitle
+        importToastMessage = message
         toastDismissTask = Task {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard !Task.isCancelled else { return }

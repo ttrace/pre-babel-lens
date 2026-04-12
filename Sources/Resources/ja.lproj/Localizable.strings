@@ -33,6 +33,10 @@
 "ui.section.source" = "入力";
 "ui.section.output" = "出力";
 "ui.action.paste" = "貼り付け";
+"ui.action.import" = "読み込み";
+"ui.import.files" = "ファイル";
+"ui.import.album" = "アルバム";
+"ui.import.ocr_failed" = "文字を読み取れませんでした";
 "ui.action.clear" = "クリア";
 "ui.action.copy_output" = "出力をコピー";
 "ui.action.close" = "閉じる";

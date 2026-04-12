@@ -33,6 +33,10 @@
 "ui.section.source" = "원문";
 "ui.section.output" = "번역";
 "ui.action.paste" = "붙여넣기";
+"ui.action.import" = "가져오기";
+"ui.import.files" = "파일";
+"ui.import.album" = "앨범";
+"ui.import.ocr_failed" = "텍스트를 읽을 수 없습니다.";
 "ui.action.clear" = "지우기";
 "ui.action.copy_output" = "출력 복사";
 "ui.action.close" = "닫기";
