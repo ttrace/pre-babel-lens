@@ -901,6 +901,20 @@ struct TranslationView: View {
                     guard let segmentIndex = clutchSelectedSegmentIndex else { return }
                     scrollOutputToClutchTarget(segmentIndex: segmentIndex, proxy: proxy)
                 }
+                #if os(macOS)
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        guard clutchModeEnabled else { return }
+                        guard !viewModel.segmentOutputs.isEmpty else { return }
+                        if let current = clutchSelectedSegmentIndex {
+                            handleOutputSegmentTap(current)
+                        } else if let first = viewModel.segmentOutputs.first?.segmentIndex {
+                            handleOutputSegmentTap(first)
+                        }
+                    }
+                )
+                #endif
             }
             .coordinateSpace(name: outputScrollCoordinateSpaceName)
             #if os(iOS)
