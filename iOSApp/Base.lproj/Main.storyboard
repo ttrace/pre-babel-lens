@@ -109,7 +109,7 @@
                             <constraint firstAttribute="trailing" secondItem="button-stack" secondAttribute="trailing" constant="8" id="c9"/>
                         </constraints>
                     </view>
-                    <navigationItem key="navigationItem" title="Pre-Babel Lens" id="nav-item"/>
+                    <navigationItem key="navigationItem" title="zen-Babel" id="nav-item"/>
                     <connections>
                         <outlet property="outputTextView" destination="output-text-view" id="out-output"/>
                         <outlet property="sourceTextView" destination="source-text-view" id="out-source"/>

@@ -468,7 +468,7 @@ struct TranslationView: View {
     private var desktopHeader: some View {
         HStack(alignment: .bottom) {
             VStack(alignment: .trailing, spacing: -6) {
-                Text("Pre-Babel Lens")
+                Text("zen-Babel")
                     .font(.system(size: 32, weight: .black, design: .serif))
                     .minimumScaleFactor(0.8)
                 Text("LOCAL TRANSLATOR")
@@ -813,7 +813,12 @@ struct TranslationView: View {
             lockDownwardScrollForRestore: canUseCompactOutputReadingMode && isCompactOutputReadingMode,
             onDownwardSwipeWhileRestoreLocked: handleSourceRestoreSwipeGesture,
             onScrollStateChanged: handleSourceScrollStateChange,
-            onCursorLocationChanged: handleSourceCursorLocationChange
+            onCursorLocationChanged: handleSourceCursorLocationChange,
+            onPastedImage: { image in
+                Task { @MainActor in
+                    await handlePastedImageOnIOS(image)
+                }
+            }
         )
             .frame(maxHeight: .infinity, alignment: .top)
             .simultaneousGesture(editorPinchGesture(host: .source), including: .gesture)
@@ -834,7 +839,12 @@ struct TranslationView: View {
             highlightedRange: sourceHighlightRange,
             centerOnHighlightIfNeeded: shouldAutoCenterSourceForClutch,
             topAlignOnHighlightScroll: shouldTopAlignSourceForClutch,
-            onCursorLocationChanged: handleSourceCursorLocationChange
+            onCursorLocationChanged: handleSourceCursorLocationChange,
+            onPastedImage: { image in
+                Task { @MainActor in
+                    await handlePastedImageOnMac(image)
+                }
+            }
         )
             .frame(minHeight: sourceEditorMinHeight, maxHeight: .infinity, alignment: .top)
             .padding(layoutTokens.editorInnerPadding)
@@ -1622,15 +1632,126 @@ struct TranslationView: View {
     private func pasteInputFromClipboard() {
         #if os(macOS)
             let pasteboard = NSPasteboard.general
+            if let image = pasteboard.readObjects(forClasses: [NSImage.self], options: nil)?.first as? NSImage {
+                Task { @MainActor in
+                    await handlePastedImageOnMac(image)
+                }
+                return
+            }
             if let text = pasteboard.string(forType: .string), !text.isEmpty {
                 viewModel.handleSourceTextPasted(text)
             }
         #elseif canImport(UIKit)
+            if let image = UIPasteboard.general.image {
+                Task { @MainActor in
+                    await handlePastedImageOnIOS(image)
+                }
+                return
+            }
             if let text = UIPasteboard.general.string, !text.isEmpty {
                 viewModel.handleSourceTextPasted(text)
             }
         #endif
     }
+
+    #if os(macOS)
+    @MainActor
+    private func handlePastedImageOnMac(_ image: NSImage) async {
+        NotificationCenter.default.post(
+            name: .pblImportHUDLoadingChanged,
+            object: nil,
+            userInfo: [ImportHUDNotificationKeys.loading: true]
+        )
+        defer {
+            NotificationCenter.default.post(
+                name: .pblImportHUDLoadingChanged,
+                object: nil,
+                userInfo: [ImportHUDNotificationKeys.loading: false]
+            )
+        }
+
+        guard let recognized = await recognizeTextInPastedImageOnMac(image) else {
+            NotificationCenter.default.post(
+                name: .pblImportHUDMessage,
+                object: nil,
+                userInfo: [ImportHUDNotificationKeys.message: localized("ui.import.ocr_failed", defaultValue: "Could not read text.")]
+            )
+            return
+        }
+
+        let trimmed = recognized.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            NotificationCenter.default.post(
+                name: .pblImportHUDMessage,
+                object: nil,
+                userInfo: [ImportHUDNotificationKeys.message: localized("ui.import.ocr_failed", defaultValue: "Could not read text.")]
+            )
+            return
+        }
+        viewModel.handleSourceTextPasted(trimmed)
+    }
+
+    private func recognizeTextInPastedImageOnMac(_ image: NSImage) async -> String? {
+        guard let tiffData = image.tiffRepresentation else { return nil }
+        let task = Task.detached(priority: .userInitiated) { () -> String? in
+            guard let source = CGImageSourceCreateWithData(tiffData as CFData, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+            else {
+                return nil
+            }
+
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.automaticallyDetectsLanguage = true
+            request.usesLanguageCorrection = true
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                return nil
+            }
+
+            guard let observations = request.results else { return nil }
+            let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+            let joined = lines.joined(separator: "\n")
+            let trimmed = joined.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return await task.value
+    }
+    #elseif canImport(UIKit)
+    @MainActor
+    private func handlePastedImageOnIOS(_ image: UIImage) async {
+        guard let data = image.pngData() ?? image.jpegData(compressionQuality: 0.95) else {
+            showImportToast(
+                localized("ui.import.ocr_failed", defaultValue: "Could not read text."),
+                placement: .sourceFieldCenter
+            )
+            return
+        }
+
+        isImportLoading = true
+        defer { isImportLoading = false }
+
+        guard let recognized = await recognizeTextInImageData(data) else {
+            showImportToast(
+                localized("ui.import.ocr_failed", defaultValue: "Could not read text."),
+                placement: .sourceFieldCenter
+            )
+            return
+        }
+
+        let trimmed = recognized.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            showImportToast(
+                localized("ui.import.ocr_failed", defaultValue: "Could not read text."),
+                placement: .sourceFieldCenter
+            )
+            return
+        }
+        viewModel.handleSourceTextPasted(trimmed)
+    }
+    #endif
     // #endregion
 
     #if os(macOS)
@@ -2545,6 +2666,7 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
     let onDownwardSwipeWhileRestoreLocked: () -> Void
     let onScrollStateChanged: (_ scrollDistanceFromTop: CGFloat, _ topSpringDistance: CGFloat, _ isDragging: Bool) -> Void
     let onCursorLocationChanged: (Int) -> Void
+    let onPastedImage: (UIImage) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -2556,7 +2678,7 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+        let textView = PasteAwareTextView()
         textView.delegate = context.coordinator
         textView.text = text
         textView.font = UIFont.systemFont(ofSize: fontSize)
@@ -2567,6 +2689,7 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         textView.smartQuotesType = .no
         textView.dataDetectorTypes = []
         textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+        textView.onPastedImage = onPastedImage
         context.coordinator.attachTextView(textView)
         textView.inputAccessoryView = context.coordinator.makeKeyboardAccessoryToolbar()
         return textView
@@ -2703,6 +2826,18 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
     }
 }
 
+private final class PasteAwareTextView: UITextView {
+    var onPastedImage: ((UIImage) -> Void)?
+
+    override func paste(_ sender: Any?) {
+        if let image = UIPasteboard.general.image {
+            onPastedImage?(image)
+            return
+        }
+        super.paste(sender)
+    }
+}
+
 private extension UITextView {
     func applyClutchHighlight(_ range: NSRange?, centerIfNeeded: Bool, topAlignIfNeeded: Bool) {
         let textStorage = textStorage
@@ -2813,6 +2948,7 @@ private struct MacSourceTextEditor: NSViewRepresentable {
     let centerOnHighlightIfNeeded: Bool
     let topAlignOnHighlightScroll: Bool
     let onCursorLocationChanged: (Int) -> Void
+    let onPastedImage: (NSImage) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, onCursorLocationChanged: onCursorLocationChanged)
@@ -2840,6 +2976,7 @@ private struct MacSourceTextEditor: NSViewRepresentable {
         textView.onDropResolvedText = { droppedText in
             context.coordinator.updateTextFromDrop(droppedText)
         }
+        textView.onPastedImage = onPastedImage
 
         scrollView.documentView = textView
         return scrollView
@@ -2903,6 +3040,7 @@ private final class DropAwareTextView: NSTextView {
     private let clutchHighlightAttribute = NSAttributedString.Key.backgroundColor
     private let clutchHighlightColor = NSColor(calibratedRed: 1.0, green: 190.0 / 255.0, blue: 56.0 / 255.0, alpha: 0.4)
     var onDropResolvedText: ((String) -> Void)?
+    var onPastedImage: ((NSImage) -> Void)?
 
     override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
         super.init(frame: frameRect, textContainer: container)
@@ -2921,6 +3059,15 @@ private final class DropAwareTextView: NSTextView {
 
     private func commonInit() {
         registerForDraggedTypes([.fileURL, .string])
+    }
+
+    override func paste(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        if let image = pasteboard.readObjects(forClasses: [NSImage.self], options: nil)?.first as? NSImage {
+            onPastedImage?(image)
+            return
+        }
+        super.paste(sender)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

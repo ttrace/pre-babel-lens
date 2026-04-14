@@ -136,7 +136,7 @@ final class TranslationViewController: UIViewController {
     }
 
     private func configureUI() {
-        title = "Pre-Babel Lens"
+        title = "zen-Babel"
         view.backgroundColor = .systemBackground
 
         sourceTextView.font = .preferredFont(forTextStyle: .body)

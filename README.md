@@ -1,11 +1,12 @@
-# Pre-Babel Lens
+# zen-Babel
 
-Pre-Babel Lens is a local-first translation app for Apple platforms (macOS / iOS).
+zen-Babel is a local-first translation app for Apple platforms (macOS / iOS).
 It is designed for on-device translation workflows where privacy, low latency, and offline-friendly behavior matter.
+In version 0.8.1, the app name changed from Pre-Babel Lens to zen-Babel (Japanese name: zenバベル).
 
 Repository: https://github.com/ttrace/pre-babel-lens
 
-![Pre-Babel Lens Screenshot](docs/images/screenshot.png)
+![zen-Babel Screenshot](docs/images/screenshot.png)
 
 ## Current Direction
 
@@ -31,7 +32,7 @@ Repository: https://github.com/ttrace/pre-babel-lens
 
 1. Select text in any app.
 2. Press `Command + C` twice quickly (about 1 second).
-3. Pre-Babel Lens comes to front and starts translation with the selected text.
+3. zen-Babel comes to front and starts translation with the selected text.
 
 Notes:
 - macOS only.
@@ -65,7 +66,7 @@ encoded="$(printf '%s' "$text" | /usr/bin/python3 -c 'import sys, urllib.parse; 
 open "prebabellens://translate?text=${encoded}"
 ```
 
-5. Save (for example: `Translate with Pre-Babel Lens`).
+5. Save (for example: `Translate with zen-Babel`).
 6. Assign a keyboard shortcut in `System Settings > Keyboard > Keyboard Shortcuts > Services`.
 
 ## Reliability and Fallback Behavior

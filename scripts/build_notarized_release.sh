@@ -59,7 +59,7 @@ cat > "${BUNDLE_DIR}/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key>
   <string>${APP_NAME}</string>
   <key>CFBundleDisplayName</key>
-  <string>Pre-Babel Lens</string>
+  <string>zen-Babel</string>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
@@ -128,7 +128,7 @@ fi
 
 echo "Creating DMG..."
 hdiutil create \
-  -volname "Pre-Babel Lens" \
+  -volname "zen-Babel" \
   -srcfolder "${DMG_STAGING_DIR}" \
   -anyowners \
   -ov \

@@ -17,7 +17,7 @@
                         <subviews>
                             <stackView opaque="NO" contentMode="scaleToFill" axis="vertical" spacing="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="launch-brand-stack">
                                 <subviews>
-                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="Pre-Babel Lens" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="YES" minimumScaleFactor="0.6" translatesAutoresizingMaskIntoConstraints="NO" id="launch-title">
+                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="zen-Babel" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="YES" minimumScaleFactor="0.6" translatesAutoresizingMaskIntoConstraints="NO" id="launch-title">
                                         <fontDescription key="fontDescription" type="serif" pointSize="52"/>
                                         <color key="textColor" red="0.17000000000000001" green="0.16000000000000000" blue="0.15000000000000002" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                                         <nil key="highlightedColor"/>

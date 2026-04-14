@@ -502,7 +502,7 @@ final class ShareViewController: UIViewController {
     }
 
     private var localizedReservationCompletedMessage: String {
-        isJapaneseLocale ? "予約完了。Pre-Babel Lensを開いてください" : "Reserved. Please open Pre-Babel Lens."
+        isJapaneseLocale ? "予約完了。zenバベルを開いてください" : "Reserved. Please open zen-Babel."
     }
 
     private var localizedOKLabel: String {
@@ -635,8 +635,8 @@ final class ShareViewController: UIViewController {
 
     private var localizedImageReservedMessage: String {
         isJapaneseLocale
-            ? "画像を予約しました。Pre-Babel Lens起動時にOCRを実行します。"
-            : "Image reserved. OCR will run when Pre-Babel Lens launches."
+            ? "画像を予約しました。zenバベル起動時にOCRを実行します。"
+            : "Image reserved. OCR will run when zen-Babel launches."
     }
 
     private var localizedCancelLabel: String {

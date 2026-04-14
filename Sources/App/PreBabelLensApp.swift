@@ -88,7 +88,7 @@ struct PreBabelLens: App {
     private var mainScene: some Scene {
 #if os(macOS)
         // URLスキーム起動時でも既存ウインドウを再利用し、状態を維持する。
-        Window("Pre-Babel Lens", id: "main-window") {
+        Window("zen-Babel", id: "main-window") {
             translationRootView
         }
 #else

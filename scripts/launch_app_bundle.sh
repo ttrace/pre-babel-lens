@@ -97,7 +97,7 @@ cat > "${INFO_PLIST}" <<'PLIST'
   <key>CFBundleName</key>
   <string>PreBabelLens</string>
   <key>CFBundleDisplayName</key>
-  <string>Pre-Babel Lens</string>
+  <string>zen-Babel</string>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
