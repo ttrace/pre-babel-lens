@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="PreBabelLens"
 BUNDLE_ID="com.ttrace.prebabellens"
-VERSION="${VERSION:-0.8.0}"
+VERSION="${VERSION:-0.8.1}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 APPLE_ID="${APPLE_ID:-}"
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"
