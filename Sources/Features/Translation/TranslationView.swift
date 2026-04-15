@@ -211,6 +211,7 @@ struct TranslationView: View {
             guard let message = notification.userInfo?[ImportHUDNotificationKeys.message] as? String else { return }
             macImportHUDDismissTask?.cancel()
             macImportHUDMessage = message
+            guard !macImportLoading else { return }
             macImportHUDDismissTask = Task {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 guard !Task.isCancelled else { return }
@@ -1777,11 +1778,21 @@ struct TranslationView: View {
         case let .success(urls):
             guard let url = urls.first else { return }
             let isImageImport = isImageExtension(url.pathExtension.lowercased())
+            let isPDFImport = url.pathExtension.lowercased() == "pdf"
             Task { @MainActor in
                 isImportLoading = true
-                defer { isImportLoading = false }
+                defer {
+                    isImportLoading = false
+                }
 
-                guard let text = await loadImportedText(from: url) else {
+                let importedText: String?
+                if isPDFImport {
+                    importedText = await importPDFToSourceStreamingOnIOS(from: url)
+                } else {
+                    importedText = await loadImportedText(from: url)
+                }
+
+                guard let text = importedText else {
                     showImportToast(
                         localized("ui.import.ocr_failed", defaultValue: "Could not read text."),
                         placement: isImageImport ? .sourceFieldCenter : .bottom
@@ -2052,6 +2063,45 @@ struct TranslationView: View {
         return nil
     }
 
+    private func importPDFToSourceStreamingOnIOS(from fileURL: URL) async -> String? {
+        #if canImport(PDFKit)
+        let hasSecurityScope = fileURL.startAccessingSecurityScopedResource()
+        defer {
+            if hasSecurityScope {
+                fileURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard let document = PDFDocument(url: fileURL) else { return nil }
+        let totalPages = document.pageCount
+        guard totalPages > 0 else { return nil }
+
+        var chunks: [String] = []
+        chunks.reserveCapacity(totalPages)
+
+        for pageIndex in 0..<totalPages {
+            guard let page = document.page(at: pageIndex) else { continue }
+            let text = (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+
+            let normalized = Self.normalizePDFSoftLineBreaksOnIOS(text)
+            let marker = Self.pdfPageMarker(pageCount: totalPages, pageNumber: pageIndex + 1)
+            let chunk = "\(marker)\n\n\(normalized)"
+            chunks.append(chunk)
+
+            // Stream incremental progress to Source while pages are processed.
+            viewModel.inputText = chunks.joined(separator: "\n\n")
+            await Task.yield()
+        }
+
+        let combined = chunks.joined(separator: "\n\n")
+        guard !combined.isEmpty else { return nil }
+        return combined
+        #else
+        return nil
+        #endif
+    }
+
     private func isImageExtension(_ fileExtension: String) -> Bool {
         guard !fileExtension.isEmpty else { return false }
         guard let type = UTType(filenameExtension: fileExtension) else { return false }
@@ -2142,7 +2192,9 @@ struct TranslationView: View {
             guard let page = document.page(at: pageIndex) else { continue }
             let text = (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {
-                pages.append(Self.normalizePDFSoftLineBreaksOnIOS(text))
+                let normalized = Self.normalizePDFSoftLineBreaksOnIOS(text)
+                let marker = Self.pdfPageMarker(pageCount: document.pageCount, pageNumber: pageIndex + 1)
+                pages.append("\(marker)\n\n\(normalized)")
             }
         }
 
@@ -2151,6 +2203,10 @@ struct TranslationView: View {
         #else
         return nil
         #endif
+    }
+
+    private nonisolated static func pdfPageMarker(pageCount: Int, pageNumber: Int) -> String {
+        "- \(pageNumber) / \(pageCount) -"
     }
 
     private nonisolated static func normalizePDFSoftLineBreaksOnIOS(_ text: String) -> String {
@@ -3443,7 +3499,9 @@ enum SourceDropImport {
             guard let page = document.page(at: pageIndex) else { continue }
             let text = (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {
-                pages.append(normalizePDFSoftLineBreaks(text))
+                let normalized = normalizePDFSoftLineBreaks(text)
+                let marker = pdfPageMarker(pageCount: document.pageCount, pageNumber: pageIndex + 1)
+                pages.append("\(marker)\n\n\(normalized)")
             }
         }
 
@@ -3452,6 +3510,10 @@ enum SourceDropImport {
         #else
         return nil
         #endif
+    }
+
+    private static func pdfPageMarker(pageCount: Int, pageNumber: Int) -> String {
+        "- \(pageNumber) / \(pageCount) -"
     }
 
     private static func normalizePDFSoftLineBreaks(_ text: String) -> String {

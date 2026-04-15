@@ -248,7 +248,9 @@ final class ShareViewController: UIViewController {
             guard let page = document.page(at: pageIndex) else { continue }
             let text = (page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {
-                pages.append(normalizePDFSoftLineBreaks(text))
+                let normalized = normalizePDFSoftLineBreaks(text)
+                let marker = pdfPageMarker(pageCount: document.pageCount, pageNumber: pageIndex + 1)
+                pages.append("\(marker)\n\n\(normalized)")
             }
         }
 
@@ -257,6 +259,10 @@ final class ShareViewController: UIViewController {
         #else
         return nil
         #endif
+    }
+
+    nonisolated private static func pdfPageMarker(pageCount: Int, pageNumber: Int) -> String {
+        "- \(pageNumber) / \(pageCount) -"
     }
 
     nonisolated private static func normalizePDFSoftLineBreaks(_ text: String) -> String {
