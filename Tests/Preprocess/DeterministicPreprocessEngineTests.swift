@@ -17,7 +17,7 @@ struct DeterministicPreprocessEngineTests {
         let result = DeterministicPreprocessEngine().analyze(request)
 
         #expect(result.input.segments.count == 2)
-        #expect(result.input.segments[0].text == sentenceA)
+        #expect(result.input.segments[0].text.trimmingCharacters(in: .whitespacesAndNewlines) == sentenceA)
         #expect(result.input.segments[1].text.contains(sentenceB))
         #expect(result.input.segments[1].text.contains(sentenceC))
     }
@@ -177,6 +177,33 @@ struct DeterministicPreprocessEngineTests {
         )
 
         #expect(reconstructed == trailingBreakSampleText)
+    }
+
+    @Test
+    func sentenceSegmentationDoesNotCreateWhitespaceOnlySegment() {
+        let text = """
+        “When the Pope says God is never on the side of those who wield the sword, there is more than a thousand-year tradition of Just War Theory in Christianity.”
+
+        “Just as I have to be careful when speaking about public policy as Vice President, the Pope should be very careful when speaking about theology.”
+        """
+        let request = TranslationRequest(
+            sourceLanguage: "en",
+            targetLanguage: "ja",
+            text: text,
+            glossary: [],
+            experimentMode: .segmented
+        )
+
+        let result = DeterministicPreprocessEngine().analyze(request)
+        let reconstructed = reconstruct(
+            segments: result.input.segments,
+            joinersAfter: result.input.segmentJoinersAfter
+        )
+
+        #expect(result.input.segments.allSatisfy {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        })
+        #expect(reconstructed == text)
     }
 
     @Test

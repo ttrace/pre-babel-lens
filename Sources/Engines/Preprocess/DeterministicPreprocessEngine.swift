@@ -267,7 +267,7 @@ enum SentenceSegmenter {
             start = safeEnd
         }
 
-        return SegmentationResult(segments: segments, joinersAfter: joinersAfter)
+        return normalizedSegmentationResult(segments: segments, joinersAfter: joinersAfter)
     }
 
     private static func composeSegmentText(
@@ -289,6 +289,57 @@ enum SentenceSegmenter {
         line
             .split(whereSeparator: \.isWhitespace)
             .count
+    }
+
+    private static func normalizedSegmentationResult(
+        segments: [TextSegment],
+        joinersAfter: [String]
+    ) -> SegmentationResult {
+        guard !segments.isEmpty else {
+            return SegmentationResult(segments: [], joinersAfter: [])
+        }
+
+        var normalizedSegments: [TextSegment] = []
+        var normalizedJoiners: [String] = []
+        var leadingWhitespaceBuffer = ""
+
+        for index in segments.indices {
+            let segment = segments[index]
+            let joiner = index < joinersAfter.count ? joinersAfter[index] : ""
+            let isWhitespaceOnly = segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+            if isWhitespaceOnly {
+                let carried = segment.text + joiner
+                if !normalizedJoiners.isEmpty {
+                    normalizedJoiners[normalizedJoiners.count - 1] += carried
+                } else {
+                    leadingWhitespaceBuffer += carried
+                }
+                continue
+            }
+
+            let normalizedText = leadingWhitespaceBuffer + segment.text
+            leadingWhitespaceBuffer = ""
+            normalizedSegments.append(
+                TextSegment(
+                    index: normalizedSegments.count,
+                    text: normalizedText,
+                    kind: segment.kind,
+                    role: normalizedSegments.isEmpty ? .leading : .regular
+                )
+            )
+            normalizedJoiners.append(joiner)
+        }
+
+        if !leadingWhitespaceBuffer.isEmpty, !normalizedJoiners.isEmpty {
+            normalizedJoiners[normalizedJoiners.count - 1] += leadingWhitespaceBuffer
+        }
+
+        if normalizedSegments.isEmpty {
+            return SegmentationResult(segments: [], joinersAfter: [])
+        }
+
+        return SegmentationResult(segments: normalizedSegments, joinersAfter: normalizedJoiners)
     }
 }
 
