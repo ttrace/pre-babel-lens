@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="PreBabelLens"
+EXECUTABLE_NAME="PreBabelLens"
+BUNDLE_NAME="zen-Babel"
 BUNDLE_ID="com.ttrace.prebabellens"
-VERSION="${VERSION:-0.8.1}"
+VERSION="${VERSION:-0.8.2}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 APPLE_ID="${APPLE_ID:-}"
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"
@@ -14,14 +15,14 @@ SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 
 XCODE_DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 BUILD_OUTPUT_DIR=".build/arm64-apple-macosx/release"
-EXECUTABLE_PATH="${BUILD_OUTPUT_DIR}/${APP_NAME}"
+EXECUTABLE_PATH="${BUILD_OUTPUT_DIR}/${EXECUTABLE_NAME}"
 ARTIFACTS_DIR="dist/releases/v${VERSION}"
-BUNDLE_DIR="${ARTIFACTS_DIR}/${APP_NAME}.app"
+BUNDLE_DIR="${ARTIFACTS_DIR}/${BUNDLE_NAME}.app"
 MACOS_DIR="${BUNDLE_DIR}/Contents/MacOS"
 RESOURCES_DIR="${BUNDLE_DIR}/Contents/Resources"
-ZIP_PATH="${ARTIFACTS_DIR}/${APP_NAME}-v${VERSION}.zip"
-DMG_STAGING_DIR="${ARTIFACTS_DIR}/${APP_NAME}-dmg"
-DMG_PATH="${ARTIFACTS_DIR}/${APP_NAME}-v${VERSION}.dmg"
+ZIP_PATH="${ARTIFACTS_DIR}/${BUNDLE_NAME}-v${VERSION}.zip"
+DMG_STAGING_DIR="${ARTIFACTS_DIR}/${BUNDLE_NAME}-dmg"
+DMG_PATH="${ARTIFACTS_DIR}/${BUNDLE_NAME}-v${VERSION}.dmg"
 
 mkdir -p "${ARTIFACTS_DIR}"
 rm -rf "${BUNDLE_DIR}" "${ZIP_PATH}" "${DMG_STAGING_DIR}" "${DMG_PATH}"
@@ -40,8 +41,8 @@ if [[ ! -x "${EXECUTABLE_PATH}" ]]; then
 fi
 
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
-cp "${EXECUTABLE_PATH}" "${MACOS_DIR}/${APP_NAME}"
-chmod +x "${MACOS_DIR}/${APP_NAME}"
+cp "${EXECUTABLE_PATH}" "${MACOS_DIR}/${EXECUTABLE_NAME}"
+chmod +x "${MACOS_DIR}/${EXECUTABLE_NAME}"
 
 cat > "${BUNDLE_DIR}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -51,13 +52,13 @@ cat > "${BUNDLE_DIR}/Contents/Info.plist" <<PLIST
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>${APP_NAME}</string>
+  <string>${EXECUTABLE_NAME}</string>
   <key>CFBundleIdentifier</key>
   <string>${BUNDLE_ID}</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>${APP_NAME}</string>
+  <string>${BUNDLE_NAME}</string>
   <key>CFBundleDisplayName</key>
   <string>zen-Babel</string>
   <key>CFBundleURLTypes</key>
@@ -117,7 +118,7 @@ ditto -c -k --sequesterRsrc --keepParent "${BUNDLE_DIR}" "${ZIP_PATH}"
 
 echo "Preparing DMG contents..."
 mkdir -p "${DMG_STAGING_DIR}"
-ditto "${BUNDLE_DIR}" "${DMG_STAGING_DIR}/${APP_NAME}.app"
+ditto "${BUNDLE_DIR}" "${DMG_STAGING_DIR}/${BUNDLE_NAME}.app"
 ln -sfn /Applications "${DMG_STAGING_DIR}/Applications"
 
 # Finder automation and provenance xattrs can trigger TCC-denied copy errors

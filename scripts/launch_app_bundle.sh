@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="PreBabelLens"
+EXECUTABLE_NAME="PreBabelLens"
+BUNDLE_NAME="zen-Babel"
 SHOULD_OPEN_APP=1
 APPLE_LANGUAGE=""
 APPLE_LOCALE=""
-EXECUTABLE_PATH=".build/arm64-apple-macosx/debug/${APP_NAME}"
+EXECUTABLE_PATH=".build/arm64-apple-macosx/debug/${EXECUTABLE_NAME}"
 DEBUG_BUILD_DIR=".build/arm64-apple-macosx/debug"
-BUNDLE_DIR=".build/AppBundle/${APP_NAME}.app"
+BUNDLE_DIR=".build/AppBundle/${BUNDLE_NAME}.app"
 MACOS_DIR="${BUNDLE_DIR}/Contents/MacOS"
 RESOURCES_DIR="${BUNDLE_DIR}/Contents/Resources"
 INFO_PLIST="${BUNDLE_DIR}/Contents/Info.plist"
@@ -78,8 +79,8 @@ fi
 rm -rf "${BUNDLE_DIR}"
 mkdir -p "${MACOS_DIR}"
 mkdir -p "${RESOURCES_DIR}"
-cp "${EXECUTABLE_PATH}" "${MACOS_DIR}/${APP_NAME}"
-chmod +x "${MACOS_DIR}/${APP_NAME}"
+cp "${EXECUTABLE_PATH}" "${MACOS_DIR}/${EXECUTABLE_NAME}"
+chmod +x "${MACOS_DIR}/${EXECUTABLE_NAME}"
 
 cat > "${INFO_PLIST}" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -95,7 +96,7 @@ cat > "${INFO_PLIST}" <<'PLIST'
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>PreBabelLens</string>
+  <string>zen-Babel</string>
   <key>CFBundleDisplayName</key>
   <string>zen-Babel</string>
   <key>CFBundleURLTypes</key>
@@ -114,7 +115,7 @@ cat > "${INFO_PLIST}" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.8.1</string>
+  <string>0.8.2</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>

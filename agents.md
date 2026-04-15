@@ -236,26 +236,26 @@ Implementation principles for this area:
 - Standard flow:
   1. `NOTARY_PROFILE=NOTARY_PROFILE scripts/build_notarized_release.sh`
   2. Confirm outputs exist in `dist/releases/v<version>/`:
-     - `PreBabelLens.app`
-     - `PreBabelLens-v<version>.zip`
-     - `PreBabelLens-v<version>.dmg`
+     - `zen-Babel.app`
+     - `zen-Babel-v<version>.zip`
+     - `zen-Babel-v<version>.dmg`
 - If script fails only at DMG creation (`hdiutil create failed`), continue with manual completion:
   1. Create DMG manually:
-     - `hdiutil create -volname "Pre-Babel Lens" -srcfolder "dist/releases/v<version>/PreBabelLens-dmg" -anyowners -ov -format UDZO "dist/releases/v<version>/PreBabelLens-v<version>.dmg"`
+     - `hdiutil create -volname "zen-Babel" -srcfolder "dist/releases/v<version>/zen-Babel-dmg" -anyowners -ov -format UDZO "dist/releases/v<version>/zen-Babel-v<version>.dmg"`
   2. Notarize DMG:
-     - `xcrun notarytool submit "dist/releases/v<version>/PreBabelLens-v<version>.dmg" --keychain-profile NOTARY_PROFILE --wait`
+     - `xcrun notarytool submit "dist/releases/v<version>/zen-Babel-v<version>.dmg" --keychain-profile NOTARY_PROFILE --wait`
   3. Staple and validate DMG:
-     - `xcrun stapler staple "dist/releases/v<version>/PreBabelLens-v<version>.dmg"`
-     - `xcrun stapler validate "dist/releases/v<version>/PreBabelLens-v<version>.dmg"`
+     - `xcrun stapler staple "dist/releases/v<version>/zen-Babel-v<version>.dmg"`
+     - `xcrun stapler validate "dist/releases/v<version>/zen-Babel-v<version>.dmg"`
 - Permission troubleshooting (important):
-  - If VS Code terminal shows `could not access /Volumes/Pre-Babel Lens/PreBabelLens.app`:
+  - If VS Code terminal shows `could not access /Volumes/zen-Babel/zen-Babel.app`:
     - Prefer running `hdiutil create ...` from `Terminal.app`.
     - VS Code may not expose/retain `Removable Volumes` permission reliably in some sessions.
   - `...` in docs/commands is placeholder text; replace with a real file path before running `notarytool submit`.
 - Final verification checklist:
   - `xcrun notarytool submit ... --wait` returns `status: Accepted`.
   - `xcrun stapler validate` reports success for both `.app` (if re-stapled) and `.dmg`.
-  - `spctl --assess --type execute --verbose=4 dist/releases/v<version>/PreBabelLens.app` returns accepted.
+  - `spctl --assess --type execute --verbose=4 dist/releases/v<version>/zen-Babel.app` returns accepted.
 
 ## iOS Release Branch Policy
 - Dedicated iOS release branch: `release/ios`
