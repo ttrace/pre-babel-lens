@@ -261,6 +261,14 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
         }
     }
 
+    func clearPendingRecoveryState() {
+        if pendingRequest != nil || configuration != nil {
+            log("clear-pending-recovery-state")
+        }
+        finishPendingRequest(with: nil)
+        requestGeneration = UUID()
+    }
+
     private func finishPendingRequest(with translatedText: String?) {
         pendingRequestWatchdogTask?.cancel()
         pendingRequestWatchdogTask = nil

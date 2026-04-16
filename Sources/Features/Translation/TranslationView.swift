@@ -66,6 +66,8 @@ struct TranslationView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var isImportLoading: Bool = false
     @State private var importToastPlacement: ImportToastPlacement = .bottom
+    @State private var isKeyboardPresented: Bool = false
+    @State private var keyboardBottomInset: CGFloat = 0
     #endif
     @State private var isMacCompactLayoutActive: Bool = false
     @State private var isIOSDesktopLayoutActive: Bool = false
@@ -160,6 +162,27 @@ struct TranslationView: View {
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+
+            if isKeyboardPresented {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button {
+                            dismissKeyboard()
+                        } label: {
+                            Image(systemName: "keyboard.chevron.compact.down.fill")
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 36, height: 36)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 12)
+                        .padding(.bottom, keyboardBottomInset + 2)
+                    }
+                }
+                .transition(.opacity)
+            }
             #endif
             #if canImport(Translation)
             if let configuration = viewModel.tfMenuPreparationConfiguration {
@@ -201,6 +224,17 @@ struct TranslationView: View {
                 return
             }
         }
+        #if os(iOS)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            updateKeyboardPresentation(notification)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isKeyboardPresented = false
+                keyboardBottomInset = 0
+            }
+        }
+        #endif
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: .pblImportHUDLoadingChanged)) { notification in
             guard let isLoading = notification.userInfo?[ImportHUDNotificationKeys.loading] as? Bool else { return }
@@ -750,7 +784,7 @@ struct TranslationView: View {
                     Button(localized("ui.action.paste", defaultValue: "Paste"), action: pasteInputFromClipboard)
                         .buttonStyle(.bordered)
                     Button {
-                        viewModel.clearSourceTextAndResetLanguageState()
+                        clearSourceAndResetRuntimeState()
                     } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 15, weight: .semibold))
@@ -1538,7 +1572,7 @@ struct TranslationView: View {
             .disabled(!canImportOrPaste)
 
             Button {
-                viewModel.clearSourceTextAndResetLanguageState()
+                clearSourceAndResetRuntimeState()
             } label: {
                 Image(systemName: "trash")
                     .symbolRenderingMode(.hierarchical)
@@ -2040,6 +2074,13 @@ struct TranslationView: View {
                 viewModel.handleSourceTextPasted(text)
             }
         #endif
+    }
+
+    private func clearSourceAndResetRuntimeState() {
+        #if canImport(Translation)
+        unsafeRecoveryController.clearPendingRecoveryState()
+        #endif
+        viewModel.clearSourceTextAndResetLanguageState()
     }
 
     #if os(macOS)
@@ -2919,6 +2960,31 @@ struct TranslationView: View {
         viewModel.refreshLanguageMenuSourceLanguage()
     }
 
+    private func updateKeyboardPresentation(_ notification: Notification) {
+        guard
+            let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue
+        else { return }
+
+        let keyboardFrame = frameValue.cgRectValue
+        let activeSceneScreenHeight =
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first(where: { $0.activationState == .foregroundActive })?
+                .screen.bounds.height
+        let fallbackSceneScreenHeight =
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first?
+                .screen.bounds.height
+        let screenHeight = activeSceneScreenHeight ?? fallbackSceneScreenHeight ?? keyboardFrame.maxY
+        let overlap = max(0, screenHeight - keyboardFrame.minY)
+
+        withAnimation(.easeInOut(duration: 0.18)) {
+            keyboardBottomInset = overlap
+            isKeyboardPresented = overlap > 0
+        }
+    }
+
     @ViewBuilder
     private func pinchOverlay(host: PinchOverlayHost) -> some View {
         if let pinchOverlayText, pinchOverlayHost == host {
@@ -3171,7 +3237,6 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         textView.onPastedImage = onPastedImage
         context.coordinator.attachTextView(textView)
-        textView.inputAccessoryView = context.coordinator.makeKeyboardAccessoryView()
         return textView
     }
 
@@ -3234,29 +3299,6 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
             isProgrammaticUpdateInProgress = false
         }
 
-        func makeKeyboardAccessoryView() -> UIView {
-            let container = UIView(frame: CGRect(x: 0, y: 0, width: 0, height: 36))
-            container.backgroundColor = .clear
-
-            let dismissButton = UIButton(type: .system)
-            dismissButton.translatesAutoresizingMaskIntoConstraints = false
-            dismissButton.tintColor = .secondaryLabel
-            dismissButton.setImage(UIImage(systemName: "keyboard.chevron.compact.down.fill"), for: .normal)
-            dismissButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
-            dismissButton.contentHorizontalAlignment = .center
-            dismissButton.contentVerticalAlignment = .center
-
-            container.addSubview(dismissButton)
-            NSLayoutConstraint.activate([
-                dismissButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-                dismissButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-                dismissButton.widthAnchor.constraint(equalToConstant: 30),
-                dismissButton.heightAnchor.constraint(equalToConstant: 30),
-            ])
-
-            return container
-        }
-
         func textViewDidChange(_ textView: UITextView) {
             guard !isProgrammaticUpdateInProgress else { return }
             text = textView.text ?? ""
@@ -3309,9 +3351,6 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
             onScrollStateChanged(scrollDistanceFromTop, topSpringDistance, scrollView.isDragging)
         }
 
-        @objc private func doneTapped() {
-            textView?.resignFirstResponder()
-        }
     }
 }
 

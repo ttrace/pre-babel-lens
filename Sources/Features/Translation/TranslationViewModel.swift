@@ -65,6 +65,7 @@ final class TranslationViewModel: ObservableObject {
     enum StatusNoticeKind: Equatable {
         case sameLanguageUntranslatable
         case aiFallbackToMachineTranslation
+        case aiFallbackToMachineTranslationUnavailable
         case unknownSourceLanguage
     }
 
@@ -368,9 +369,26 @@ final class TranslationViewModel: ObservableObject {
     }
 
     func clearSourceTextAndResetLanguageState() {
+        resetTranslationRuntimeStateForClear()
         inputText = ""
+        translatedText = ""
+        segmentOutputs = []
+        segmentJoinersAfter = []
+        sourceSegments = []
+        sourceTextSnapshotForSegments = ""
+        traces = []
+        protectedTokens = []
+        glossaryMatches = []
+        ambiguityHints = []
+        engineName = ""
         detectedLanguageCode = ""
+        errorMessage = nil
+        userAlert = nil
+        statusNotices = []
+        status = .ready
+        aiLanguageSupported = true
         tfMenuUnsupportedHintMessage = nil
+        lastMenuSourceLanguageCode = nil
         refreshTFMenuAvailabilityIfNeeded()
     }
 
@@ -1004,6 +1022,36 @@ final class TranslationViewModel: ObservableObject {
         activeMetricsFirstOutputAt = nil
     }
 
+    private func resetTranslationRuntimeStateForClear() {
+        let taskToDrain = activeTranslationTask
+        taskToDrain?.cancel()
+        activeTranslationTask = nil
+        activeTranslationToken = nil
+        isTranslating = false
+
+        if let taskToDrain {
+            Task { @MainActor [weak self] in
+                await taskToDrain.value
+                self?.appendDeveloperLog("clear: previous translation task drained")
+            }
+        }
+
+        pendingTranslationRequestStartedAt = nil
+        partialTranslationsBySegment = [:]
+        partialJoinersAfter = []
+        tfMenuAvailabilityTask?.cancel()
+        tfMenuAvailabilityTask = nil
+        tfMenuInputRefreshTask?.cancel()
+        tfMenuInputRefreshTask = nil
+        #if canImport(Translation)
+        tfMenuPreparationConfiguration = nil
+        tfMenuPreparationTargetLanguageCode = nil
+        tfMenuPreparationGeneration = UUID()
+        #endif
+        resetSessionMetricsState()
+        appendDeveloperLog("clear: runtime cache/session state reset")
+    }
+
     private func milliseconds(from start: Date?, to end: Date) -> String {
         guard let start else { return "(n/a)" }
         return String(format: "%.2f ms", end.timeIntervalSince(start) * 1_000)
@@ -1312,6 +1360,14 @@ final class TranslationViewModel: ObservableObject {
             noticeKinds.append(.aiFallbackToMachineTranslation)
         }
 
+        let tfRecoveryUnavailableAfterAIFallback = request.usesAITranslation
+            && output.segmentOutputs.contains(where: { $0.isUnsafeFallback && !$0.isUnsafeRecoveredByTranslationFramework })
+            && !output.segmentOutputs.contains(where: \.isUnsafeRecoveredByTranslationFramework)
+            && output.analysis.engineName != "same-language-fallback"
+        if tfRecoveryUnavailableAfterAIFallback {
+            noticeKinds.append(.aiFallbackToMachineTranslationUnavailable)
+        }
+
         if detected == "und",
            output.translatedText == request.text,
            output.segmentOutputs.allSatisfy({ $0.isUnsafeFallback }) {
@@ -1340,6 +1396,15 @@ final class TranslationViewModel: ObservableObject {
                     defaultValue: "AI translation could not complete, so machine translation was used."
                 ),
                 style: .blue
+            )
+        case .aiFallbackToMachineTranslationUnavailable:
+            return StatusNotice(
+                markerText: "text",
+                text: localized(
+                    "status.notice.ai_fallback_to_tf",
+                    defaultValue: "AI translation could not complete, so machine translation was used."
+                ),
+                style: .orange
             )
         case .unknownSourceLanguage:
             return StatusNotice(
