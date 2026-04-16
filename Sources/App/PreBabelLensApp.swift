@@ -243,7 +243,7 @@ private struct FileMenuCommands: Commands {
     }
 
     private func localized(_ key: String, defaultValue: String) -> String {
-        NSLocalizedString(key, bundle: .main, value: defaultValue, comment: "")
+        AppLocalization.localized(key, defaultValue: defaultValue)
     }
 }
 
@@ -308,31 +308,31 @@ private struct TranslationMenuCommands: Commands {
     }
 
     private var topMenuTitle: String {
-        isJapaneseLocale ? "翻訳" : "Translate"
+        localized("menu.translate.top", defaultValue: "Translate")
     }
 
     private var translateTitle: String {
-        isJapaneseLocale ? "翻訳" : "Translate"
+        localized("menu.translate.action.translate", defaultValue: "Translate")
     }
 
     private var stopTitle: String {
-        isJapaneseLocale ? "中断" : "Stop"
+        localized("menu.translate.action.stop", defaultValue: "Stop")
     }
 
     private var switchToAITitle: String {
-        isJapaneseLocale ? "AI翻訳に切り替え" : "Switch to AI Translation"
+        localized("menu.translate.switch_to_ai", defaultValue: "Switch to AI Translation")
     }
 
     private var switchToStandardTitle: String {
-        isJapaneseLocale ? "機械翻訳に切り替え" : "Switch to Standard Translation"
+        localized("menu.translate.switch_to_standard", defaultValue: "Switch to Standard Translation")
     }
 
     private var aiUnavailableTitle: String {
-        isJapaneseLocale ? "AI翻訳はこのデバイスで利用できません" : "AI translation unavailable on this device"
+        localized("menu.translate.ai_unavailable", defaultValue: "AI translation unavailable on this device")
     }
 
-    private var isJapaneseLocale: Bool {
-        Locale.preferredLanguages.first?.hasPrefix("ja") == true
+    private func localized(_ key: String, defaultValue: String) -> String {
+        AppLocalization.localized(key, defaultValue: defaultValue)
     }
 
     private var currentLabelStyle: TargetLanguageOption.LabelStyle {
@@ -450,7 +450,7 @@ private struct ViewMenuCommands: Commands {
     }
 
     private func localized(_ key: String, defaultValue: String) -> String {
-        NSLocalizedString(key, bundle: .main, value: defaultValue, comment: "")
+        AppLocalization.localized(key, defaultValue: defaultValue)
     }
 }
 

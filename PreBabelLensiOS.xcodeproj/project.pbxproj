@@ -176,6 +176,7 @@
 				P00000000000000000000003 /* Sources */,
 				P00000000000000000000001 /* Frameworks */,
 				P00000000000000000000002 /* Resources */,
+				P00000000000000000000008 /* Copy Localizable.strings */,
 				P00000000000000000000004 /* Embed App Extensions */,
 			);
 			buildRules = (
@@ -265,6 +266,37 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		P00000000000000000000008 /* Copy Localizable.strings */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Sources/Resources/en.lproj/Localizable.strings",
+				"$(SRCROOT)/Sources/Resources/ja.lproj/Localizable.strings",
+				"$(SRCROOT)/Sources/Resources/ko.lproj/Localizable.strings",
+				"$(SRCROOT)/Sources/Resources/zh-Hans.lproj/Localizable.strings",
+				"$(SRCROOT)/Sources/Resources/zh-Hant.lproj/Localizable.strings",
+			);
+			name = "Copy Localizable.strings";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/en.lproj/Localizable.strings",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ja.lproj/Localizable.strings",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ko.lproj/Localizable.strings",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/zh-Hans.lproj/Localizable.strings",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/zh-Hant.lproj/Localizable.strings",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nRES_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nfor lproj in \"${SRCROOT}/Sources/Resources\"/*.lproj; do\n  [ -d \"$lproj\" ] || continue\n  lang=\"$(basename \"$lproj\")\"\n  mkdir -p \"$RES_DIR/$lang\"\n  if [ -f \"$lproj/Localizable.strings\" ]; then\n    cp \"$lproj/Localizable.strings\" \"$RES_DIR/$lang/Localizable.strings\"\n  fi\ndone\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		P00000000000000000000003 /* Sources */ = {

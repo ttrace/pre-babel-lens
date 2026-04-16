@@ -3,6 +3,40 @@ import Foundation
 @preconcurrency import Translation
 #endif
 
+enum AppLocalization {
+    static func localized(_ key: String, defaultValue: String) -> String {
+        for bundle in candidateBundles {
+            let value = bundle.localizedString(forKey: key, value: nil, table: nil)
+            if value != key {
+                return value
+            }
+        }
+        return defaultValue
+    }
+
+    private static let candidateBundles: [Bundle] = {
+        var bundles: [Bundle] = []
+        var seenPaths: Set<String> = []
+
+        func appendBundle(_ bundle: Bundle) {
+            let path = bundle.bundlePath
+            if seenPaths.insert(path).inserted {
+                bundles.append(bundle)
+            }
+        }
+
+        #if SWIFT_PACKAGE
+        appendBundle(.module)
+        #endif
+        appendBundle(.main)
+        appendBundle(Bundle(for: BundleToken.self))
+
+        return bundles
+    }()
+}
+
+private final class BundleToken {}
+
 @MainActor
 final class TranslationViewModel: ObservableObject {
     private enum AppStateKey {
@@ -762,13 +796,21 @@ final class TranslationViewModel: ObservableObject {
             if let languagePair, normalizedLanguageCode(languagePair.source) == normalizedLanguageCode(languagePair.target) {
                 let pairLabel = "\(languagePair.source) -> \(languagePair.target)"
                 return UserAlert(
-                    title: isJapaneseLocale ? "同一言語ペアです" : "Same Language Pair",
-                    message: isJapaneseLocale
-                        ? "入力言語と出力言語が同じペアになっています（\(pairLabel)）。別の出力言語を選択して再実行してください。"
-                        : "The source and target language are the same (\(pairLabel)). Select a different target language and try again.",
-                    inlineMessage: isJapaneseLocale
-                        ? "同一言語ペア（\(pairLabel)）のため翻訳できません。"
-                        : "Cannot translate with the same language pair (\(pairLabel)).",
+                    title: localized("alert.same_language_pair.title", defaultValue: "Same Language Pair"),
+                    message: String(
+                        format: localized(
+                            "alert.same_language_pair.message_format",
+                            defaultValue: "The source and target language are the same (%@). Select a different target language and try again."
+                        ),
+                        pairLabel
+                    ),
+                    inlineMessage: String(
+                        format: localized(
+                            "alert.same_language_pair.inline_format",
+                            defaultValue: "Cannot translate with the same language pair (%@)."
+                        ),
+                        pairLabel
+                    ),
                     offersSettingsShortcut: false
                 )
             }
@@ -1228,8 +1270,7 @@ final class TranslationViewModel: ObservableObject {
     }
 
     private func localized(_ key: String, defaultValue: String) -> String {
-        let bundle = Bundle.main
-        return NSLocalizedString(key, bundle: bundle, value: defaultValue, comment: "")
+        AppLocalization.localized(key, defaultValue: defaultValue)
     }
 
     private func makeStatusNotices(output: TranslationOutput, request: TranslationRequest) -> [StatusNotice] {
@@ -1267,19 +1308,28 @@ final class TranslationViewModel: ObservableObject {
         case .sameLanguageUntranslatable:
             return StatusNotice(
                 markerText: "text",
-                text: "同一言語のために翻訳できませんでした",
+                text: localized(
+                    "status.notice.same_language_untranslatable",
+                    defaultValue: "Could not translate because source and target are the same language."
+                ),
                 style: .orange
             )
         case .aiFallbackToMachineTranslation:
             return StatusNotice(
                 markerText: "text",
-                text: "AI出力できなかったため機械翻訳しました",
+                text: localized(
+                    "status.notice.ai_fallback_to_tf",
+                    defaultValue: "AI translation could not complete, so machine translation was used."
+                ),
                 style: .blue
             )
         case .unknownSourceLanguage:
             return StatusNotice(
                 markerText: "text",
-                text: "元言語が不明だったため翻訳できませんでした",
+                text: localized(
+                    "status.notice.unknown_source_language",
+                    defaultValue: "Could not translate because the source language could not be detected."
+                ),
                 style: .orange
             )
         }
@@ -1295,9 +1345,9 @@ final class TranslationViewModel: ObservableObject {
         if normalized.isEmpty || normalized == "und" {
             switch role {
             case .source:
-                return isJapaneseLocale ? "入力言語" : "source language"
+                return localized("tf.menu.source_language_fallback", defaultValue: "source language")
             case .target:
-                return isJapaneseLocale ? "出力言語" : "target language"
+                return localized("tf.menu.target_language_fallback", defaultValue: "target language")
             }
         }
         return code

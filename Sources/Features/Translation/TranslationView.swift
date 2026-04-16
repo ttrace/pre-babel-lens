@@ -1612,7 +1612,7 @@ struct TranslationView: View {
     }
 
     private func localized(_ key: String, defaultValue: String) -> String {
-        NSLocalizedString(key, bundle: .main, value: defaultValue, comment: "")
+        AppLocalization.localized(key, defaultValue: defaultValue)
     }
 
     #if os(macOS)
@@ -3365,11 +3365,9 @@ enum SourceDropImport {
     }
 
     private static func postImportFailureMessage() async {
-        let message = NSLocalizedString(
+        let message = AppLocalization.localized(
             "menu.file.import.failed.message",
-            bundle: .main,
-            value: "This file does not contain supported text content.",
-            comment: ""
+            defaultValue: "This file does not contain supported text content."
         )
         await MainActor.run {
             NotificationCenter.default.post(
@@ -3932,20 +3930,16 @@ private extension View {
                     return Alert(
                         title: Text(alert.title),
                         message: Text(alert.message),
-                        primaryButton: .default(Text(NSLocalizedString(
+                        primaryButton: .default(Text(AppLocalization.localized(
                             "ui.alert.open_settings",
-                            bundle: .main,
-                            value: "Open Settings",
-                            comment: ""
+                            defaultValue: "Open Settings"
                         ))) {
                             guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
                             UIApplication.shared.open(url)
                         },
-                        secondaryButton: .cancel(Text(NSLocalizedString(
+                        secondaryButton: .cancel(Text(AppLocalization.localized(
                             "ui.action.close",
-                            bundle: .main,
-                            value: "Close",
-                            comment: ""
+                            defaultValue: "Close"
                         ))) {
                             viewModel.dismissUserAlert()
                         }
@@ -3955,11 +3949,9 @@ private extension View {
                 return Alert(
                     title: Text(alert.title),
                     message: Text(alert.message),
-                    dismissButton: .default(Text(NSLocalizedString(
+                    dismissButton: .default(Text(AppLocalization.localized(
                         "ui.action.ok",
-                        bundle: .main,
-                        value: "OK",
-                        comment: ""
+                        defaultValue: "OK"
                     ))) {
                         viewModel.dismissUserAlert()
                     }
