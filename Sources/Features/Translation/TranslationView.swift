@@ -144,7 +144,7 @@ struct TranslationView: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
-            .ignoresSafeArea()
+            .ignoresSafeArea(edges: [.horizontal, .bottom])
 
             contentLayout
                 .foregroundStyle(colorScheme == .dark ? .white : .primary)
@@ -267,18 +267,6 @@ struct TranslationView: View {
                 handleSharedImportIfNeeded: {}
             )
             #endif
-            #if os(iOS)
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button {
-                        dismissKeyboard()
-                    } label: {
-                        Image(systemName: "keyboard.chevron.compact.down")
-                    }
-                }
-            }
-            #endif
         #else
             #if os(iOS)
             baseView
@@ -302,16 +290,6 @@ struct TranslationView: View {
                     guard let item else { return }
                     Task {
                         await handlePickedPhotoItem(item)
-                    }
-                }
-                .toolbar {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button {
-                            dismissKeyboard()
-                        } label: {
-                            Image(systemName: "keyboard.chevron.compact.down")
-                        }
                     }
                 }
             #else
@@ -867,6 +845,7 @@ struct TranslationView: View {
             .frame(maxHeight: .infinity, alignment: .top)
             .simultaneousGesture(editorPinchGesture(host: .source), including: .gesture)
             .padding(layoutTokens.editorInnerPadding)
+            .padding(.bottom, isUnifiedStackedFieldLayout ? sourceGroupReservedBottomInset : 0)
             .font(.system(size: editorFontPointSize))
             .background {
                 if isUnifiedStackedFieldLayout {
@@ -1025,6 +1004,13 @@ struct TranslationView: View {
                         .padding(.horizontal, 0)
                 }
             }
+            .overlay(alignment: .bottomTrailing) {
+                if isUnifiedStackedFieldLayout {
+                    outputOverlayButtonGroup
+                        .padding(.trailing, 10)
+                        .padding(.bottom, 10)
+                }
+            }
             #else
             .background(
                 colorScheme == .dark ? Color.black.opacity(0.3) : Color.white.opacity(0.4),
@@ -1036,13 +1022,7 @@ struct TranslationView: View {
 
     @ViewBuilder
     private var outputOverlayTopControls: some View {
-        ZStack {
-            HStack {
-                Spacer(minLength: 0)
-                outputOverlayButtonGroup
-            }
-            outputHeaderCenteredControlGroup
-        }
+        outputHeaderCenteredControlGroup
     }
 
     @ViewBuilder
@@ -1050,6 +1030,9 @@ struct TranslationView: View {
         HStack(spacing: translationGroupInnerSpacing) {
             inlineLanguageMenu
             outputTranslateButton
+            #if os(iOS)
+            outputShareButton
+            #endif
         }
         .fixedSize(horizontal: true, vertical: false)
         .padding(.horizontal, translationGroupHorizontalPadding)
@@ -1090,9 +1073,11 @@ struct TranslationView: View {
             copyOutputToClipboard()
         } label: {
             Image(systemName: "doc.on.doc")
+                .symbolRenderingMode(.hierarchical)
                 .font(.system(size: 16, weight: .semibold))
+                .frame(width: 44, height: 34)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(InteractiveSymbolButtonStyle())
         .help(localized("ui.action.copy_output", defaultValue: "Copy output"))
         .disabled(viewModel.translatedText.isEmpty)
     }
@@ -1112,13 +1097,7 @@ struct TranslationView: View {
 
     @ViewBuilder
     private var outputOverlayButtonGroup: some View {
-        HStack(spacing: 8) {
-            #if os(iOS)
-            outputShareButton
-            #endif
-            outputCopyButton
-        }
-        .opacity(viewModel.translatedText.isEmpty ? 0.5 : 1)
+        HStack(spacing: 8) { outputCopyButton }
     }
 
     @ViewBuilder
@@ -1133,8 +1112,10 @@ struct TranslationView: View {
                 .symbolRenderingMode(.hierarchical)
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(.white)
-                .frame(minWidth: 44, minHeight: 34)
-                .padding(.horizontal, 8)
+                .frame(
+                    width: translationPrimaryButtonWidth,
+                    height: translationPrimaryButtonHeight
+                )
                 .background(
                     Capsule()
                         .fill(Color.blue)
@@ -1497,15 +1478,24 @@ struct TranslationView: View {
     private var sourceOverlayButtonGroup: some View {
         let hasSourceText = !viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let canImportOrPaste = !isImportLoading && !viewModel.isTranslating && !hasSourceText
-        HStack(spacing: 8) {
+        HStack(spacing: sourceGroupSymbolSpacing) {
             Button {
                 presentFileImporter()
             } label: {
                 Image(systemName: "folder")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 44, height: 34)
+                    .symbolRenderingMode(.hierarchical)
+                    .font(
+                        .system(
+                            size: canImportOrPaste ? sourceGroupActiveSymbolSize : sourceGroupInactiveSymbolSize,
+                            weight: .semibold
+                        )
+                    )
+                    .frame(
+                        width: canImportOrPaste ? translationPrimaryButtonWidth : sourceGroupInactiveButtonWidth,
+                        height: canImportOrPaste ? translationPrimaryButtonHeight : sourceGroupInactiveButtonHeight
+                    )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(InteractiveSymbolButtonStyle())
             .accessibilityLabel(localized("ui.import.files", defaultValue: "Files"))
             .disabled(!canImportOrPaste)
 
@@ -1513,19 +1503,37 @@ struct TranslationView: View {
                 presentPhotoPicker()
             } label: {
                 Image(systemName: "photo.on.rectangle.angled")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 44, height: 34)
+                    .symbolRenderingMode(.hierarchical)
+                    .font(
+                        .system(
+                            size: canImportOrPaste ? sourceGroupActiveSymbolSize : sourceGroupInactiveSymbolSize,
+                            weight: .semibold
+                        )
+                    )
+                    .frame(
+                        width: canImportOrPaste ? translationPrimaryButtonWidth : sourceGroupInactiveButtonWidth,
+                        height: canImportOrPaste ? translationPrimaryButtonHeight : sourceGroupInactiveButtonHeight
+                    )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(InteractiveSymbolButtonStyle())
             .accessibilityLabel(localized("ui.import.album", defaultValue: "Album"))
             .disabled(!canImportOrPaste)
 
             Button(action: pasteInputFromClipboard) {
                 Image(systemName: "doc.on.clipboard")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 44, height: 34)
+                    .symbolRenderingMode(.hierarchical)
+                    .font(
+                        .system(
+                            size: canImportOrPaste ? sourceGroupActiveSymbolSize : sourceGroupInactiveSymbolSize,
+                            weight: .semibold
+                        )
+                    )
+                    .frame(
+                        width: canImportOrPaste ? translationPrimaryButtonWidth : sourceGroupInactiveButtonWidth,
+                        height: canImportOrPaste ? translationPrimaryButtonHeight : sourceGroupInactiveButtonHeight
+                    )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(InteractiveSymbolButtonStyle())
             .accessibilityLabel(localized("ui.action.paste", defaultValue: "Paste"))
             .disabled(!canImportOrPaste)
 
@@ -1533,10 +1541,19 @@ struct TranslationView: View {
                 viewModel.clearSourceTextAndResetLanguageState()
             } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 44, height: 34)
+                    .symbolRenderingMode(.hierarchical)
+                    .font(
+                        .system(
+                            size: hasSourceText ? sourceGroupActiveSymbolSize : sourceGroupInactiveSymbolSize,
+                            weight: .semibold
+                        )
+                    )
+                    .frame(
+                        width: hasSourceText ? translationPrimaryButtonWidth : sourceGroupInactiveButtonWidth,
+                        height: hasSourceText ? translationPrimaryButtonHeight : sourceGroupInactiveButtonHeight
+                    )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(InteractiveSymbolButtonStyle())
             .accessibilityLabel(localized("ui.action.clear", defaultValue: "Clear"))
             .disabled(!hasSourceText)
         }
@@ -1548,7 +1565,6 @@ struct TranslationView: View {
                 .stroke(Color.white.opacity(colorScheme == .dark ? 0.22 : 0.32), lineWidth: 1)
                 .allowsHitTesting(false)
         }
-        .opacity((isImportLoading || viewModel.isTranslating) ? 0.55 : 1)
     }
 
     #else
@@ -1583,6 +1599,38 @@ struct TranslationView: View {
 
     private var translationGroupInnerSpacing: CGFloat {
         8
+    }
+
+    private var translationPrimaryButtonWidth: CGFloat {
+        60
+    }
+
+    private var translationPrimaryButtonHeight: CGFloat {
+        34
+    }
+
+    private var sourceGroupSymbolSpacing: CGFloat {
+        4
+    }
+
+    private var sourceGroupInactiveButtonWidth: CGFloat {
+        44
+    }
+
+    private var sourceGroupInactiveButtonHeight: CGFloat {
+        28
+    }
+
+    private var sourceGroupActiveSymbolSize: CGFloat {
+        20
+    }
+
+    private var sourceGroupInactiveSymbolSize: CGFloat {
+        15
+    }
+
+    private var sourceGroupReservedBottomInset: CGFloat {
+        translationPrimaryButtonHeight + 18
     }
 
     private var translationGroupHorizontalPadding: CGFloat {
@@ -3123,7 +3171,7 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         textView.onPastedImage = onPastedImage
         context.coordinator.attachTextView(textView)
-        textView.inputAccessoryView = context.coordinator.makeKeyboardAccessoryToolbar()
+        textView.inputAccessoryView = context.coordinator.makeKeyboardAccessoryView()
         return textView
     }
 
@@ -3186,22 +3234,27 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
             isProgrammaticUpdateInProgress = false
         }
 
-        func makeKeyboardAccessoryToolbar() -> UIToolbar {
-            let toolbar = UIToolbar()
-            toolbar.sizeToFit()
+        func makeKeyboardAccessoryView() -> UIView {
+            let container = UIView(frame: CGRect(x: 0, y: 0, width: 0, height: 36))
+            container.backgroundColor = .clear
 
-            let spacer = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-            let doneStyle: UIBarButtonItem.Style
-            if #available(iOS 26.0, *) {
-                doneStyle = .prominent
-            } else {
-                doneStyle = .done
-            }
-            let doneImage = UIImage(systemName: "keyboard.chevron.compact.down")
-            let done = UIBarButtonItem(image: doneImage, style: doneStyle, target: self, action: #selector(doneTapped))
+            let dismissButton = UIButton(type: .system)
+            dismissButton.translatesAutoresizingMaskIntoConstraints = false
+            dismissButton.tintColor = .secondaryLabel
+            dismissButton.setImage(UIImage(systemName: "keyboard.chevron.compact.down.fill"), for: .normal)
+            dismissButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
+            dismissButton.contentHorizontalAlignment = .center
+            dismissButton.contentVerticalAlignment = .center
 
-            toolbar.items = [spacer, done]
-            return toolbar
+            container.addSubview(dismissButton)
+            NSLayoutConstraint.activate([
+                dismissButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+                dismissButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+                dismissButton.widthAnchor.constraint(equalToConstant: 30),
+                dismissButton.heightAnchor.constraint(equalToConstant: 30),
+            ])
+
+            return container
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -4225,6 +4278,35 @@ private struct RoundedCornerShape: Shape {
     }
 }
 #endif
+
+private struct InteractiveSymbolButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        InteractiveSymbolButtonBody(configuration: configuration)
+    }
+}
+
+private struct InteractiveSymbolButtonBody: View {
+    let configuration: InteractiveSymbolButtonStyle.Configuration
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        configuration.label
+            .foregroundStyle(foregroundColor)
+    }
+
+    private var foregroundColor: Color {
+        if !isEnabled {
+            #if os(iOS)
+            return Color(.quaternaryLabel)
+            #elseif os(macOS)
+            return Color.secondary.opacity(0.38)
+            #else
+            return Color.secondary.opacity(0.38)
+            #endif
+        }
+        return configuration.isPressed ? .primary : .secondary
+    }
+}
 
 enum ImportHUDNotificationKeys {
     static let loading = "isLoading"
