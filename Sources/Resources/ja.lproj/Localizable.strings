@@ -50,3 +50,5 @@
 "status.notice.same_language_untranslatable" = "同一言語のために翻訳できませんでした";
 "status.notice.ai_fallback_to_tf" = "AI出力できなかったため機械翻訳しました";
 "status.notice.unknown_source_language" = "元言語が不明だったため翻訳できませんでした";
+
+"ui.action.share" = "共有";

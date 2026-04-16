@@ -50,3 +50,5 @@
 "status.notice.same_language_untranslatable" = "원문과 대상 언어가 같아 번역할 수 없습니다.";
 "status.notice.ai_fallback_to_tf" = "AI 번역을 완료하지 못해 기계 번역으로 처리했습니다.";
 "status.notice.unknown_source_language" = "원문 언어를 감지할 수 없어 번역할 수 없습니다.";
+
+"ui.action.share" = "공유";

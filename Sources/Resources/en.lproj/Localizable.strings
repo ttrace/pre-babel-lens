@@ -50,3 +50,5 @@
 "status.notice.same_language_untranslatable" = "Could not translate because source and target are the same language.";
 "status.notice.ai_fallback_to_tf" = "AI translation could not complete, so machine translation was used.";
 "status.notice.unknown_source_language" = "Could not translate because the source language could not be detected.";
+
+"ui.action.share" = "Share";

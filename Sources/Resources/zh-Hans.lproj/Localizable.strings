@@ -50,3 +50,5 @@
 "status.notice.same_language_untranslatable" = "源语言和目标语言相同，无法翻译。";
 "status.notice.ai_fallback_to_tf" = "AI 翻译未能完成，已改用机器翻译。";
 "status.notice.unknown_source_language" = "无法检测源语言，无法翻译。";
+
+"ui.action.share" = "分享";

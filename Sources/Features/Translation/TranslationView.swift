@@ -335,16 +335,16 @@ struct TranslationView: View {
             let usesDesktopLikeIOSLayout = !isPortrait && proxy.size.width >= compactLayoutThresholdWidth
             let contentTopPadding: CGFloat = 8
             let contentBottomPadding: CGFloat = 2
-            let verticalGap: CGFloat = 14
             let desktopColumnGap: CGFloat = 9
             let contentHorizontalPadding: CGFloat = usesDesktopLikeIOSLayout ? 36 : 12
             let compactStatusBottomMargin: CGFloat = contentHorizontalPadding / 2
+            let usesStackedCompactLayout = !(usesDesktopLikeIOSLayout || (isWideIOSLayout && !isPortrait))
+            let verticalGap: CGFloat = usesStackedCompactLayout ? 0 : 14
             let availableHeight = max(0, proxy.size.height - contentTopPadding - contentBottomPadding)
             let splitHeight = max(
                 140,
                 (availableHeight - verticalGap - outputStatusReservedHeight - compactStatusBottomMargin) / 2
             )
-            let usesStackedCompactLayout = !(usesDesktopLikeIOSLayout || (isWideIOSLayout && !isPortrait))
             let compactHeights = compactStackedHeights(
                 availableHeight: availableHeight,
                 verticalGap: verticalGap,
@@ -735,52 +735,63 @@ struct TranslationView: View {
 
     // #region MARK: Subviews
     private var sourceCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text(localized("ui.section.source", defaultValue: "Source"))
-                    .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                Spacer()
-                #if os(iOS)
-                Menu {
-                    Button {
-                        presentFileImporter()
-                    } label: {
-                        Label(
-                            localized("ui.import.files", defaultValue: "Files"),
-                            systemImage: isFileImportPickerPresented ? "folder.fill" : "folder"
-                        )
-                    }
+        VStack(alignment: .leading, spacing: isUnifiedStackedFieldLayout ? 0 : 14) {
+            if !isUnifiedStackedFieldLayout {
+                HStack {
+                    Text(localized("ui.section.source", defaultValue: "Source"))
+                        .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer()
+                    #if os(iOS)
+                    Menu {
+                        Button {
+                            presentFileImporter()
+                        } label: {
+                            Label(
+                                localized("ui.import.files", defaultValue: "Files"),
+                                systemImage: isFileImportPickerPresented ? "folder.fill" : "folder"
+                            )
+                        }
 
-                    Button {
-                        presentPhotoPicker()
+                        Button {
+                            presentPhotoPicker()
+                        } label: {
+                            Label(
+                                localized("ui.import.album", defaultValue: "Album"),
+                                systemImage: isPhotoPickerPresented ? "photo.on.rectangle.angled.fill" : "photo.on.rectangle.angled"
+                            )
+                        }
                     } label: {
-                        Label(
-                            localized("ui.import.album", defaultValue: "Album"),
-                            systemImage: isPhotoPickerPresented ? "photo.on.rectangle.angled.fill" : "photo.on.rectangle.angled"
-                        )
+                        Image(systemName: "square.and.arrow.down")
                     }
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
-                }
-                .menuOrder(.fixed)
-                .buttonStyle(.bordered)
-                .accessibilityLabel(localized("ui.action.import", defaultValue: "Import"))
-                #endif
-                Button(localized("ui.action.paste", defaultValue: "Paste"), action: pasteInputFromClipboard)
+                    .menuOrder(.fixed)
                     .buttonStyle(.bordered)
-                Button {
-                    viewModel.clearSourceTextAndResetLanguageState()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 15, weight: .semibold))
+                    .accessibilityLabel(localized("ui.action.import", defaultValue: "Import"))
+                    #endif
+                    Button(localized("ui.action.paste", defaultValue: "Paste"), action: pasteInputFromClipboard)
+                        .buttonStyle(.bordered)
+                    Button {
+                        viewModel.clearSourceTextAndResetLanguageState()
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel(localized("ui.action.clear", defaultValue: "Clear"))
                 }
-                .buttonStyle(.bordered)
-                .accessibilityLabel(localized("ui.action.clear", defaultValue: "Clear"))
             }
 
-            sourceEditor
+            ZStack(alignment: .topTrailing) {
+                sourceEditor
+                #if os(iOS)
+                if isUnifiedStackedFieldLayout {
+                    sourceOverlayButtonGroup
+                        .padding(.top, 10)
+                        .padding(.trailing, 10)
+                }
+                #endif
+            }
         }
         .padding(cardOuterPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -845,11 +856,19 @@ struct TranslationView: View {
             .simultaneousGesture(editorPinchGesture(host: .source), including: .gesture)
             .padding(layoutTokens.editorInnerPadding)
             .font(.system(size: editorFontPointSize))
-            .background(colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30))
-            .overlay(
-                RoundedRectangle(cornerRadius: editorCornerRadius)
-                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-            )
+            .background(sourceEditorBackgroundShape.fill(iOSFieldBackgroundColor))
+            .overlay(sourceEditorBackgroundShape.stroke(Color.primary.opacity(0.10), lineWidth: 1))
+            .overlay(alignment: .topLeading) {
+                if isUnifiedStackedFieldLayout,
+                   viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("翻訳したい文章を入力してください")
+                        .font(.system(size: editorFontPointSize))
+                        .foregroundStyle(.secondary.opacity(0.85))
+                        .padding(.leading, layoutTokens.editorInnerPadding + 8)
+                        .padding(.top, layoutTokens.editorInnerPadding + 14)
+                        .allowsHitTesting(false)
+                }
+            }
             .overlay(alignment: .top) {
                 pinchOverlay(host: .source)
             }
@@ -882,9 +901,21 @@ struct TranslationView: View {
     }
 
     private var outputContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if usesInlineLanguageMenuInOutputCard {
-                ZStack {
+        VStack(alignment: .leading, spacing: isUnifiedStackedFieldLayout ? 0 : 14) {
+            if !isUnifiedStackedFieldLayout {
+                if usesInlineLanguageMenuInOutputCard {
+                    ZStack {
+                        HStack {
+                            Text(localized("ui.section.output", defaultValue: "Output"))
+                                .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                            Spacer()
+                            outputCopyButton
+                        }
+                        outputHeaderCenteredControlGroup
+                    }
+                } else {
                     HStack {
                         Text(localized("ui.section.output", defaultValue: "Output"))
                             .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
@@ -892,25 +923,16 @@ struct TranslationView: View {
                             .fixedSize(horizontal: true, vertical: false)
                         Spacer()
                         outputCopyButton
+                        outputTranslateButton
                     }
-                    outputHeaderCenteredControlGroup
-                }
-            } else {
-                HStack {
-                    Text(localized("ui.section.output", defaultValue: "Output"))
-                        .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Spacer()
-                    outputCopyButton
-                    outputTranslateButton
                 }
             }
 
+            let topInset: CGFloat = isUnifiedStackedFieldLayout ? 62 : 12
             ScrollViewReader { proxy in
                 ScrollView {
                     outputSegmentsView
-                        .padding(.top, 12)
+                        .padding(.top, topInset)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 12)
                 }
@@ -950,13 +972,17 @@ struct TranslationView: View {
             #endif
             .clipped()
             #if os(iOS)
-            .background(colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30))
-            .overlay(
-                RoundedRectangle(cornerRadius: editorCornerRadius)
-                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-            )
+            .background(outputEditorBackgroundShape.fill(iOSFieldBackgroundColor))
+            .overlay(outputEditorBackgroundShape.stroke(Color.primary.opacity(0.10), lineWidth: 1))
             .overlay(alignment: .top) {
                 pinchOverlay(host: .output)
+            }
+            .overlay(alignment: .top) {
+                if isUnifiedStackedFieldLayout {
+                    outputOverlayTopControls
+                        .padding(.top, 10)
+                        .padding(.horizontal, 10)
+                }
             }
             #else
             .background(
@@ -968,11 +994,23 @@ struct TranslationView: View {
     }
 
     @ViewBuilder
+    private var outputOverlayTopControls: some View {
+        ZStack {
+            HStack {
+                Spacer(minLength: 0)
+                outputOverlayButtonGroup
+            }
+            outputHeaderCenteredControlGroup
+        }
+    }
+
+    @ViewBuilder
     private var outputHeaderCenteredControlGroup: some View {
         HStack(spacing: 8) {
             inlineLanguageMenu
             outputTranslateButton
         }
+        .opacity(viewModel.targetLanguageOptions.isEmpty ? 0.55 : 1)
     }
 
     @ViewBuilder
@@ -986,6 +1024,30 @@ struct TranslationView: View {
         .buttonStyle(.bordered)
         .help(localized("ui.action.copy_output", defaultValue: "Copy output"))
         .disabled(viewModel.translatedText.isEmpty)
+    }
+
+    #if os(iOS)
+    @ViewBuilder
+    private var outputShareButton: some View {
+        ShareLink(item: viewModel.translatedText) {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 16, weight: .semibold))
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel(localized("ui.action.share", defaultValue: "Share"))
+        .disabled(viewModel.translatedText.isEmpty)
+    }
+    #endif
+
+    @ViewBuilder
+    private var outputOverlayButtonGroup: some View {
+        HStack(spacing: 8) {
+            #if os(iOS)
+            outputShareButton
+            #endif
+            outputCopyButton
+        }
+        .opacity(viewModel.translatedText.isEmpty ? 0.5 : 1)
     }
 
     @ViewBuilder
@@ -1290,6 +1352,9 @@ struct TranslationView: View {
 
     private var cardOuterPadding: CGFloat {
         #if os(iOS)
+        if isUnifiedStackedFieldLayout {
+            return 0
+        }
         if isIOSDesktopLayoutActive {
             return layoutTokens.cardOuterPadding / 2
         }
@@ -1309,6 +1374,78 @@ struct TranslationView: View {
         #endif
         return layoutTokens.editorCornerRadius
     }
+
+    #if os(iOS)
+    private var isUnifiedStackedFieldLayout: Bool {
+        !isIOSDesktopLayoutActive
+    }
+
+    private var iOSFieldBackgroundColor: Color {
+        colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30)
+    }
+
+    private var sourceEditorBackgroundShape: AnyShape {
+        if isUnifiedStackedFieldLayout {
+            return AnyShape(RoundedCornerShape(corners: [.topLeft, .topRight], radius: editorCornerRadius))
+        } else {
+            return AnyShape(RoundedRectangle(cornerRadius: editorCornerRadius))
+        }
+    }
+
+    private var outputEditorBackgroundShape: AnyShape {
+        if isUnifiedStackedFieldLayout {
+            return AnyShape(RoundedCornerShape(corners: [.bottomLeft, .bottomRight], radius: editorCornerRadius))
+        } else {
+            return AnyShape(RoundedRectangle(cornerRadius: editorCornerRadius))
+        }
+    }
+
+    @ViewBuilder
+    private var sourceOverlayButtonGroup: some View {
+        HStack(spacing: 8) {
+            Button {
+                presentFileImporter()
+            } label: {
+                Image(systemName: "folder")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel(localized("ui.import.files", defaultValue: "Files"))
+            .disabled(isImportLoading || viewModel.isTranslating)
+
+            Button {
+                presentPhotoPicker()
+            } label: {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel(localized("ui.import.album", defaultValue: "Album"))
+            .disabled(isImportLoading || viewModel.isTranslating)
+
+            Button(action: pasteInputFromClipboard) {
+                Image(systemName: "doc.on.clipboard")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel(localized("ui.action.paste", defaultValue: "Paste"))
+            .disabled(isImportLoading || viewModel.isTranslating)
+
+            Button {
+                viewModel.clearSourceTextAndResetLanguageState()
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel(localized("ui.action.clear", defaultValue: "Clear"))
+            .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .opacity((isImportLoading || viewModel.isTranslating) ? 0.55 : 1)
+    }
+    #else
+    private var isUnifiedStackedFieldLayout: Bool { false }
+    #endif
 
     private var editorMinHeight: CGFloat {
         layoutTokens.editorMinHeight
@@ -3929,6 +4066,22 @@ enum SourceDropImport {
     }
 }
 
+#endif
+
+#if os(iOS)
+private struct RoundedCornerShape: Shape {
+    var corners: UIRectCorner
+    var radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let bezierPath = UIBezierPath(
+            roundedRect: rect,
+            byRoundingCorners: corners,
+            cornerRadii: CGSize(width: radius, height: radius)
+        )
+        return Path(bezierPath.cgPath)
+    }
+}
 #endif
 
 enum ImportHUDNotificationKeys {
