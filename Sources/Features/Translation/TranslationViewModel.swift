@@ -499,6 +499,7 @@ final class TranslationViewModel: ObservableObject {
             targetLanguage: targetLanguage,
             text: normalizedInput,
             glossary: parseGlossary(glossaryText),
+            preferredLanguages: preferredLanguages,
             experimentMode: experimentMode,
             usesAITranslation: usesAppleIntelligenceTranslation
         )

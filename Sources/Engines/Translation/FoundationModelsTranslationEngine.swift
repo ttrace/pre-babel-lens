@@ -957,6 +957,11 @@ private enum FoundationModelsRuntimeTranslator {
     private static func promptForSegment(_ segment: TextSegment, input: TranslationInput) -> String {
         var lines: [String] = []
         lines.append("Translate this segment.")
+        let styleDirectives = promptStyleDirectives(for: input)
+        if !styleDirectives.isEmpty {
+            lines.append("Style directives:")
+            lines.append(contentsOf: styleDirectives.map { "- \($0)" })
+        }
 
         if !input.glossaryMatches.isEmpty {
             let glossaryLines = input.glossaryMatches
@@ -982,6 +987,11 @@ private enum FoundationModelsRuntimeTranslator {
         lines.append("Task: direct translation only.")
         lines.append("Source language: \(input.sourceLanguage)")
         lines.append("Target language: \(input.targetLanguage)")
+        let styleDirectives = promptStyleDirectives(for: input)
+        if !styleDirectives.isEmpty {
+            lines.append("Style directives:")
+            lines.append(contentsOf: styleDirectives.map { "- \($0)" })
+        }
 
         if !input.protectedTokens.isEmpty {
             let protectedList = input.protectedTokens
@@ -1005,23 +1015,102 @@ private enum FoundationModelsRuntimeTranslator {
 
     private static func strictPromptForSegment(
         sourceText: String,
-        expectedTargetLanguage: String
+        expectedTargetLanguage: String,
+        preferredLanguages: [String]
     ) -> String {
-        """
-        Translate this text strictly.
-        Rules:
-        - target language: \(expectedTargetLanguage)
-        - source is HTML-like text
-        - STRICT REQUIREMENT: preserve all `</br>` tokens exactly as in source (same count and order)
-        - do not replace, remove, or add `</br>`
-        - translate every sentence in the source text; do not omit any part
-        - keep the same number of sentences as the source text; do not merge, split, summarize, or drop sentences
-        - output translation only, no notes or placeholders
-        - translation must not be the kind label (for example: heading, general, dialogue, ui-labels, lists, codes_or_path)
+        var lines: [String] = []
+        lines.append("Translate this text strictly.")
+        lines.append("Rules:")
+        lines.append("- target language: \(expectedTargetLanguage)")
+        let styleDirectives = promptStyleDirectives(
+            targetLanguage: expectedTargetLanguage,
+            preferredLanguages: preferredLanguages
+        )
+        lines.append(contentsOf: styleDirectives.map { "- \($0)" })
+        lines.append("- source is HTML-like text")
+        lines.append("- STRICT REQUIREMENT: preserve all `</br>` tokens exactly as in source (same count and order)")
+        lines.append("- do not replace, remove, or add `</br>`")
+        lines.append("- translate every sentence in the source text; do not omit any part")
+        lines.append("- keep the same number of sentences as the source text; do not merge, split, summarize, or drop sentences")
+        lines.append("- output translation only, no notes or placeholders")
+        lines.append("- translation must not be the kind label (for example: heading, general, dialogue, ui-labels, lists, codes_or_path)")
+        lines.append("")
+        lines.append("Source text:")
+        lines.append(sourceTextForPrompt(sourceText))
+        return lines.joined(separator: "\n")
+    }
 
-        Source text:
-        \(sourceTextForPrompt(sourceText))
-        """
+    private static func promptStyleDirectives(for input: TranslationInput) -> [String] {
+        promptStyleDirectives(
+            targetLanguage: input.targetLanguage,
+            preferredLanguages: input.preferredLanguages
+        )
+    }
+
+    private static func promptStyleDirectives(
+        targetLanguage: String,
+        preferredLanguages: [String]
+    ) -> [String] {
+        let normalizedTarget = normalizedLanguageCode(targetLanguage)
+        if normalizedTarget == "zh",
+           prefersTraditionalChineseOverSimplified(from: preferredLanguages) {
+            return ["Translate into Traditional Chinese script."]
+        }
+        if normalizedTarget == "en",
+           prefersBritishEnglish(from: preferredLanguages) {
+            return ["Use British English style."]
+        }
+        return []
+    }
+
+    private static func prefersTraditionalChineseOverSimplified(from preferredLanguages: [String]) -> Bool {
+        for preferred in preferredLanguages {
+            guard let preference = chineseScriptPreference(from: preferred) else { continue }
+            return preference == .traditional
+        }
+        return false
+    }
+
+    private static func prefersBritishEnglish(from preferredLanguages: [String]) -> Bool {
+        for preferred in preferredLanguages {
+            let normalized = normalizedLocaleIdentifier(preferred)
+            let components = normalized.split(separator: "-")
+            guard let base = components.first, base == "en" else { continue }
+            return components.contains("gb") || components.contains("uk")
+        }
+        return false
+    }
+
+    private static func chineseScriptPreference(from languageCode: String) -> ChineseScriptPreference? {
+        let normalized = normalizedLocaleIdentifier(languageCode)
+        let components = normalized.split(separator: "-")
+        guard let base = components.first, base == "zh" else { return nil }
+
+        if components.contains("hant") {
+            return .traditional
+        }
+        if components.contains("hans") {
+            return .simplified
+        }
+        if components.contains("tw") || components.contains("hk") || components.contains("mo") {
+            return .traditional
+        }
+        if components.contains("cn") || components.contains("sg") || components.contains("my") {
+            return .simplified
+        }
+        return nil
+    }
+
+    private static func normalizedLocaleIdentifier(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+    }
+
+    private enum ChineseScriptPreference {
+        case traditional
+        case simplified
     }
 
     private static func fallbackSafeSegmentTranslation(

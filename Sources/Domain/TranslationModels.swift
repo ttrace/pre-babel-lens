@@ -39,6 +39,7 @@ struct TranslationRequest: Equatable {
     var targetLanguage: String
     var text: String
     var glossary: [GlossaryEntry]
+    var preferredLanguages: [String] = []
     var experimentMode: TranslationExperimentMode = .segmentedGlossaryProtected
     var usesAITranslation: Bool = false
 }
@@ -52,6 +53,7 @@ struct TranslationInput: Equatable {
     var sourceLanguage: String
     var targetLanguage: String
     var originalText: String
+    var preferredLanguages: [String] = []
     var detectedLanguageCode: String? = nil
     var isDetectedLanguageSupportedByAppleIntelligence: Bool = true
     var segments: [TextSegment]

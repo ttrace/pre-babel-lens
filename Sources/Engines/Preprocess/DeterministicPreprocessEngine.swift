@@ -68,6 +68,7 @@ struct DeterministicPreprocessEngine: PreprocessEngine {
                 sourceLanguage: detectedLanguage,
                 targetLanguage: request.targetLanguage,
                 originalText: request.text,
+                preferredLanguages: request.preferredLanguages,
                 detectedLanguageCode: detectedLanguage,
                 isDetectedLanguageSupportedByAppleIntelligence: isSupportedByAppleIntelligence,
                 segments: segmentation.segments,
