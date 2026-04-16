@@ -99,6 +99,7 @@ final class TranslationViewModel: ObservableObject {
     private let orchestrator: TranslationOrchestrator
     private let iOSEnginePolicy: IOSAdaptiveTranslationEnginePolicy?
     private let userDefaults: UserDefaults
+    private let preferredLanguages: [String]
     private var shouldTranslateOnLaunch: Bool = false
     private var shouldActivateAppOnLaunch: Bool = false
     private var partialTranslationsBySegment: [Int: String] = [:]
@@ -122,10 +123,12 @@ final class TranslationViewModel: ObservableObject {
         orchestrator: TranslationOrchestrator,
         iOSEnginePolicy: IOSAdaptiveTranslationEnginePolicy? = nil,
         launchInputText: String? = nil,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        preferredLanguages: [String] = Locale.preferredLanguages
     ) {
         self.userDefaults = userDefaults
         self.iOSEnginePolicy = iOSEnginePolicy
+        self.preferredLanguages = preferredLanguages
         self.experimentMode = TranslationExperimentMode(
             rawValue: userDefaults.string(forKey: AppStateKey.experimentMode) ?? ""
         ) ?? .segmented
@@ -136,10 +139,11 @@ final class TranslationViewModel: ObservableObject {
             initialOptions.contains(where: { $0.code == persistedTargetLanguage })
         {
             self.targetLanguage = persistedTargetLanguage
-        } else if initialOptions.contains(where: { $0.code == "ja" }) {
-            self.targetLanguage = "ja"
         } else {
-            self.targetLanguage = initialOptions.first?.code ?? "en"
+            self.targetLanguage = Self.preferredDefaultTargetLanguageCode(
+                from: initialOptions,
+                preferredLanguages: preferredLanguages
+            ) ?? "en-US"
         }
         self.orchestrator = orchestrator
         refreshEnginePreference()
@@ -410,11 +414,10 @@ final class TranslationViewModel: ObservableObject {
             persistTargetLanguageSelection()
             return
         }
-        if let japanese = targetLanguageOptions.first(where: { $0.code == "ja" }) {
-            targetLanguage = japanese.code
-            return
-        }
-        targetLanguage = targetLanguageOptions[0].code
+        targetLanguage = Self.preferredDefaultTargetLanguageCode(
+            from: targetLanguageOptions,
+            preferredLanguages: preferredLanguages
+        ) ?? targetLanguageOptions[0].code
     }
 
     private func persistTargetLanguageSelection() {
@@ -424,6 +427,46 @@ final class TranslationViewModel: ObservableObject {
 
     private func persistExperimentModeSelection() {
         userDefaults.set(experimentMode.rawValue, forKey: AppStateKey.experimentMode)
+    }
+
+    private static func preferredDefaultTargetLanguageCode(
+        from options: [TargetLanguageOption],
+        preferredLanguages: [String]
+    ) -> String? {
+        guard !options.isEmpty else { return nil }
+
+        for preferred in preferredLanguages {
+            if let matched = matchingTargetLanguageCode(for: preferred, in: options) {
+                return matched
+            }
+        }
+
+        if let englishUS = matchingTargetLanguageCode(for: "en-US", in: options) {
+            return englishUS
+        }
+        if let english = matchingTargetLanguageCode(for: "en", in: options) {
+            return english
+        }
+        return options.first?.code
+    }
+
+    private static func matchingTargetLanguageCode(for rawCode: String, in options: [TargetLanguageOption]) -> String? {
+        let normalized = normalizedLanguageIdentifier(rawCode)
+        guard !normalized.isEmpty else { return nil }
+
+        let optionPairs: [(code: String, normalized: String)] = options.map {
+            ($0.code, normalizedLanguageIdentifier($0.code))
+        }
+
+        for candidate in preferredLanguageCandidates(from: normalized) {
+            if let matched = optionPairs.first(where: { $0.normalized == candidate }) {
+                return matched.code
+            }
+        }
+
+        let base = normalizedLanguageCode(normalized)
+        guard !base.isEmpty else { return nil }
+        return optionPairs.first(where: { normalizedLanguageCode($0.normalized) == base })?.code
     }
 
     private func runManagedTranslation() async {
@@ -931,7 +974,7 @@ final class TranslationViewModel: ObservableObject {
         return token
     }
 
-    private func normalizedLanguageCode(_ code: String) -> String {
+    private static func normalizedLanguageCode(_ code: String) -> String {
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if let hyphenIndex = trimmed.firstIndex(of: "-") {
             return String(trimmed[..<hyphenIndex])
@@ -940,6 +983,68 @@ final class TranslationViewModel: ObservableObject {
             return String(trimmed[..<underscoreIndex])
         }
         return trimmed
+    }
+
+    private static func normalizedLanguageIdentifier(_ code: String) -> String {
+        code
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "_", with: "-")
+            .lowercased()
+    }
+
+    private static func preferredLanguageCandidates(from normalizedIdentifier: String) -> [String] {
+        let parts = normalizedIdentifier.split(separator: "-").map(String.init)
+        guard let language = parts.first, !language.isEmpty else { return [] }
+
+        var script: String?
+        var region: String?
+
+        for part in parts.dropFirst() {
+            if part.count == 4 {
+                script = part.lowercased()
+            } else if part.count == 2 || part.count == 3 {
+                region = part.uppercased()
+            }
+        }
+
+        if script == nil, let inferred = inferredChineseScript(language: language, region: region) {
+            script = inferred
+        }
+
+        var candidates: [String] = [normalizedIdentifier]
+        if let script {
+            if let region {
+                candidates.append("\(language)-\(script)-\(region.lowercased())")
+            }
+            candidates.append("\(language)-\(script)")
+        }
+        if let region {
+            candidates.append("\(language)-\(region.lowercased())")
+        }
+        candidates.append(language)
+
+        var seen: Set<String> = []
+        return candidates.filter { seen.insert($0).inserted }
+    }
+
+    private static func inferredChineseScript(language: String, region: String?) -> String? {
+        guard language == "zh", let region else { return nil }
+        switch region.uppercased() {
+        case "TW", "HK", "MO":
+            return "hant"
+        case "CN", "SG", "MY":
+            return "hans"
+        default:
+            return nil
+        }
+    }
+
+    private func normalizedLanguageCode(_ code: String) -> String {
+        Self.normalizedLanguageCode(code)
+    }
+
+    private func normalizedLanguageIdentifier(_ code: String) -> String {
+        Self.normalizedLanguageIdentifier(code)
     }
 
     private func normalizedLineEndings(in text: String) -> String {

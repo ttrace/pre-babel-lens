@@ -87,6 +87,30 @@ struct TranslationViewModelURLHandlingTests {
     }
 
     @Test
+    @MainActor
+    func initialTargetLanguageUsesPreferredLanguageWhenSupported() {
+        let counter = TranslationCallCounter()
+        let viewModel = makeViewModel(counter: counter, preferredLanguages: ["fr-FR"])
+        #expect(viewModel.targetLanguage.lowercased().hasPrefix("fr"))
+    }
+
+    @Test
+    @MainActor
+    func initialTargetLanguageFallsBackToEnglishWhenPreferredUnsupported() {
+        let counter = TranslationCallCounter()
+        let viewModel = makeViewModel(counter: counter, preferredLanguages: ["tlh-KX", "zz-ZZ"])
+        #expect(viewModel.targetLanguage.lowercased().hasPrefix("en"))
+    }
+
+    @Test
+    @MainActor
+    func initialTargetLanguagePrefersTraditionalChineseWhenRegionImpliesHant() {
+        let counter = TranslationCallCounter()
+        let viewModel = makeViewModel(counter: counter, preferredLanguages: ["zh-TW"])
+        #expect(viewModel.targetLanguage.lowercased() == "zh-hant")
+    }
+
+    @Test
     func handleIncomingURLUpdatesInputAndTranslates() async throws {
         let counter = TranslationCallCounter()
         let viewModel = await makeViewModel(counter: counter)
@@ -246,7 +270,8 @@ struct TranslationViewModelURLHandlingTests {
     private func makeViewModel(
         counter: TranslationCallCounter,
         userDefaults: UserDefaults? = nil,
-        engine: (any TranslationEngine)? = nil
+        engine: (any TranslationEngine)? = nil,
+        preferredLanguages: [String] = Locale.preferredLanguages
     ) -> TranslationViewModel {
         let resolvedUserDefaults = userDefaults ?? Self.makeIsolatedUserDefaults()
         let selectedEngine = engine ?? CountingTranslationEngine(counter: counter)
@@ -258,7 +283,8 @@ struct TranslationViewModelURLHandlingTests {
 
         return TranslationViewModel(
             orchestrator: orchestrator,
-            userDefaults: resolvedUserDefaults
+            userDefaults: resolvedUserDefaults,
+            preferredLanguages: preferredLanguages
         )
     }
 
