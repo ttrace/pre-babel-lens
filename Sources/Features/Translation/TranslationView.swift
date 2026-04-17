@@ -68,6 +68,7 @@ struct TranslationView: View {
     @State private var importToastPlacement: ImportToastPlacement = .bottom
     @State private var isKeyboardPresented: Bool = false
     @State private var keyboardBottomInset: CGFloat = 0
+    @State private var isIPadLandscapeLayoutActive: Bool = false
     #endif
     @State private var isMacCompactLayoutActive: Bool = false
     @State private var isIOSDesktopLayoutActive: Bool = false
@@ -163,7 +164,7 @@ struct TranslationView: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
-            if isKeyboardPresented {
+            if isKeyboardPresented && !isIPadLandscapeLayoutActive {
                 VStack {
                     Spacer()
                     HStack {
@@ -195,7 +196,7 @@ struct TranslationView: View {
             #endif
         }
         #if os(iOS)
-        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .ignoresSafeArea(.keyboard, edges: shouldIgnoreKeyboardSafeAreaBottom ? .bottom : [])
         #endif
         .onChange(of: viewModel.isTranslating) { _, isTranslating in
             if isTranslating {
@@ -344,13 +345,13 @@ struct TranslationView: View {
         #if os(iOS)
         GeometryReader { proxy in
             let isPortrait = proxy.size.height > proxy.size.width
-            let usesDesktopLikeIOSLayout = !isPortrait && proxy.size.width >= compactLayoutThresholdWidth
+            let usesSideBySideIOSLayout = isWideIOSLayout && !isPortrait
             let contentTopPadding: CGFloat = 8
             let contentBottomPadding: CGFloat = 2
             let desktopColumnGap: CGFloat = 9
-            let contentHorizontalPadding: CGFloat = usesDesktopLikeIOSLayout ? 36 : 12
+            let contentHorizontalPadding: CGFloat = 12
             let compactStatusBottomMargin: CGFloat = contentHorizontalPadding / 2
-            let usesStackedCompactLayout = !(usesDesktopLikeIOSLayout || (isWideIOSLayout && !isPortrait))
+            let usesStackedCompactLayout = !usesSideBySideIOSLayout
             let verticalGap: CGFloat = usesStackedCompactLayout ? 0 : 14
             let availableHeight = max(0, proxy.size.height - contentTopPadding - contentBottomPadding)
             let splitHeight = max(
@@ -366,15 +367,8 @@ struct TranslationView: View {
             )
 
             VStack(alignment: .leading, spacing: 14) {
-                if usesDesktopLikeIOSLayout {
-                    HStack(alignment: .top, spacing: desktopColumnGap) {
-                        sourceCard
-                        outputColumnWithStatus()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .padding(.bottom, desktopColumnGap)
-                } else if isWideIOSLayout && !isPortrait {
-                    HStack(alignment: .top, spacing: 14) {
+                if usesSideBySideIOSLayout {
+                    HStack(alignment: .top, spacing: 0) {
                         sourceCard
                         outputColumnWithStatus()
                     }
@@ -399,15 +393,16 @@ struct TranslationView: View {
             .padding(.bottom, contentBottomPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .onAppear {
-                isIOSDesktopLayoutActive = usesDesktopLikeIOSLayout
+                isIOSDesktopLayoutActive = false
                 updateCompactStackedLayoutState(isActive: usesStackedCompactLayout)
+                isIPadLandscapeLayoutActive = isPadDevice && usesSideBySideIOSLayout
             }
             .onChange(of: proxy.size) { _, newSize in
                 let portrait = newSize.height > newSize.width
-                isIOSDesktopLayoutActive = !portrait && newSize.width >= compactLayoutThresholdWidth
-                let usesDesktop = !portrait && newSize.width >= compactLayoutThresholdWidth
                 let usesWideLandscape = isWideIOSLayout && !portrait
-                updateCompactStackedLayoutState(isActive: !(usesDesktop || usesWideLandscape))
+                isIOSDesktopLayoutActive = false
+                updateCompactStackedLayoutState(isActive: !usesWideLandscape)
+                isIPadLandscapeLayoutActive = isPadDevice && usesWideLandscape
             }
             .animation(.easeInOut(duration: 0.24), value: isCompactOutputReadingMode)
         }
@@ -710,6 +705,22 @@ struct TranslationView: View {
         #endif
     }
 
+    private var isPadDevice: Bool {
+        #if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .pad
+        #else
+        false
+        #endif
+    }
+
+    private var shouldIgnoreKeyboardSafeAreaBottom: Bool {
+        #if os(iOS)
+        !isIPadLandscapeLayoutActive
+        #else
+        true
+        #endif
+    }
+
     private var usesCompactDesktopLayout: Bool {
         #if os(macOS)
         isMacCompactLayoutActive
@@ -814,9 +825,18 @@ struct TranslationView: View {
         }
         .overlay(alignment: .bottom) {
             #if os(iOS)
-            if isUnifiedStackedFieldLayout {
+            if isUnifiedStackedFieldLayout, !isSourceGroupTopDocked {
                 sourceOverlayButtonGroup
                     .padding(.bottom, 0)
+                    .zIndex(3)
+            }
+            #endif
+        }
+        .overlay(alignment: .top) {
+            #if os(iOS)
+            if isUnifiedStackedFieldLayout, isSourceGroupTopDocked {
+                sourceOverlayButtonGroup
+                    .padding(.top, 0)
                     .zIndex(3)
             }
             #endif
@@ -860,6 +880,8 @@ struct TranslationView: View {
         IOSClutchSourceTextEditor(
             text: $viewModel.inputText,
             fontSize: editorFontPointSize,
+            additionalTopTextInset: isSourceGroupTopDocked ? sourceTopDockReservedInset : 0,
+            additionalBottomTextInset: isUnifiedStackedFieldLayout && !isSourceGroupTopDocked ? sourceGroupReservedBottomInset : 0,
             highlightedRange: sourceHighlightRange,
             centerOnHighlightIfNeeded: shouldAutoCenterSourceForClutch,
             topAlignOnHighlightScroll: shouldTopAlignSourceForClutch,
@@ -878,8 +900,10 @@ struct TranslationView: View {
         )
             .frame(maxHeight: .infinity, alignment: .top)
             .simultaneousGesture(editorPinchGesture(host: .source), including: .gesture)
-            .padding(layoutTokens.editorInnerPadding)
-            .padding(.bottom, isUnifiedStackedFieldLayout ? sourceGroupReservedBottomInset : 0)
+            .padding(.top, layoutTokens.editorInnerPadding)
+            .padding(.bottom, layoutTokens.editorInnerPadding)
+            .padding(.leading, layoutTokens.editorInnerPadding)
+            .padding(.trailing, layoutTokens.editorInnerPadding)
             .font(.system(size: editorFontPointSize))
             .background {
                 if isUnifiedStackedFieldLayout {
@@ -907,7 +931,12 @@ struct TranslationView: View {
                         .font(.system(size: editorFontPointSize))
                         .foregroundStyle(.secondary.opacity(0.85))
                         .padding(.leading, layoutTokens.editorInnerPadding + 8)
-                        .padding(.top, layoutTokens.editorInnerPadding + 14)
+                        .padding(
+                            .top,
+                            layoutTokens.editorInnerPadding
+                                + 14
+                                + (isSourceGroupTopDocked ? sourceTopDockReservedInset : 0)
+                        )
                         .allowsHitTesting(false)
                 }
             }
@@ -970,12 +999,13 @@ struct TranslationView: View {
                 }
             }
 
-            let topInset: CGFloat = isUnifiedStackedFieldLayout ? 62 : 12
+            let topInset: CGFloat = isUnifiedStackedFieldLayout ? unifiedOverlayTopInset : 12
             ScrollViewReader { proxy in
                 ScrollView {
                     outputSegmentsView
                         .padding(.top, topInset)
-                        .padding(.horizontal, 12)
+                        .padding(.leading, 12)
+                        .padding(.trailing, 12)
                         .padding(.bottom, 12)
                 }
                 .onChange(of: clutchSelectedSegmentIndex) { _, segmentIndex in
@@ -1072,11 +1102,6 @@ struct TranslationView: View {
         .padding(.horizontal, translationGroupHorizontalPadding)
         .padding(.vertical, 7)
         .background(.thinMaterial, in: outputTopDockShape)
-        .overlay {
-            outputTopDockShape
-                .stroke(Color.white.opacity(colorScheme == .dark ? 0.26 : 0.38), lineWidth: 1)
-                .allowsHitTesting(false)
-        }
         .overlay {
             outputTopDockShape
                 .fill(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.14))
@@ -1176,6 +1201,7 @@ struct TranslationView: View {
         .padding(cardOuterPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         #if os(iOS)
+        .clipShape(outputFieldClipShape)
         .background {
             if isUnifiedStackedFieldLayout {
                 outputFieldWrapperShape.fill(iOSFieldBackgroundColor)
@@ -1211,7 +1237,7 @@ struct TranslationView: View {
             Color.clear
                 .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
         } else if viewModel.segmentOutputs.isEmpty {
-            Text(viewModel.translatedText)
+            Text(justifiedAttributedText(viewModel.translatedText))
                 .font(.system(size: editorFontPointSize))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1231,7 +1257,7 @@ struct TranslationView: View {
         var combined = AttributedString()
         for index in viewModel.segmentOutputs.indices {
             let segment = viewModel.segmentOutputs[index]
-            var chunk = AttributedString(segment.translatedText + joinerAfterOutputSegment(at: index))
+            var chunk = justifiedAttributedText(segment.translatedText + joinerAfterOutputSegment(at: index))
             chunk.foregroundColor = defaultOutputTextColor
             if segment.isUnsafeFallback {
                 if segment.isUnsafeRecoveredByTranslationFramework {
@@ -1254,6 +1280,19 @@ struct TranslationView: View {
             combined += chunk
         }
         return combined
+    }
+
+    private func justifiedAttributedText(_ text: String) -> AttributedString {
+        let mutable = NSMutableAttributedString(string: text)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .justified
+        paragraph.lineBreakMode = .byWordWrapping
+        mutable.addAttribute(
+            .paragraphStyle,
+            value: paragraph,
+            range: NSRange(location: 0, length: mutable.length)
+        )
+        return AttributedString(mutable)
     }
 
     private func outputSegmentTapURL(for segmentIndex: Int) -> URL? {
@@ -1491,21 +1530,31 @@ struct TranslationView: View {
     }
 
     private var sourceFieldWrapperShape: AnyShape {
-        AnyShape(
+        let corners: UIRectCorner = isIPadLandscapeLayoutActive
+            ? [.topLeft, .bottomLeft]
+            : [.topLeft, .topRight]
+        return AnyShape(
             RoundedCornerShape(
-                corners: [.topLeft, .topRight],
+                corners: corners,
                 radius: unifiedFieldWrapperCornerRadius
             )
         )
     }
 
     private var outputFieldWrapperShape: AnyShape {
-        AnyShape(
+        let corners: UIRectCorner = isIPadLandscapeLayoutActive
+            ? [.topRight, .bottomRight]
+            : [.bottomLeft, .bottomRight]
+        return AnyShape(
             RoundedCornerShape(
-                corners: [.bottomLeft, .bottomRight],
+                corners: corners,
                 radius: unifiedFieldWrapperCornerRadius
             )
         )
+    }
+
+    private var outputFieldClipShape: AnyShape {
+        isUnifiedStackedFieldLayout ? outputFieldWrapperShape : AnyShape(Rectangle())
     }
 
     @ViewBuilder
@@ -1593,12 +1642,7 @@ struct TranslationView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: sourceBottomDockShape)
-        .overlay {
-            sourceBottomDockShape
-                .stroke(Color.white.opacity(colorScheme == .dark ? 0.22 : 0.32), lineWidth: 1)
-                .allowsHitTesting(false)
-        }
+        .background(.thinMaterial, in: sourceDockShape)
     }
 
     #else
@@ -1616,6 +1660,23 @@ struct TranslationView: View {
         #else
         AnyShape(Capsule())
         #endif
+    }
+
+    private var sourceTopDockShape: AnyShape {
+        #if os(iOS)
+        AnyShape(
+            RoundedCornerShape(
+                corners: [.bottomLeft, .bottomRight],
+                radius: 16
+            )
+        )
+        #else
+        AnyShape(Capsule())
+        #endif
+    }
+
+    private var sourceDockShape: AnyShape {
+        isSourceGroupTopDocked ? sourceTopDockShape : sourceBottomDockShape
     }
 
     private var outputTopDockShape: AnyShape {
@@ -1663,9 +1724,26 @@ struct TranslationView: View {
         15
     }
 
+    private var isSourceGroupTopDocked: Bool {
+        #if os(iOS)
+        isUnifiedStackedFieldLayout && !isCompactStackedLayoutActive
+        #else
+        false
+        #endif
+    }
+
     private var sourceGroupReservedBottomInset: CGFloat {
         translationPrimaryButtonHeight + 18
     }
+
+    private var sourceTopDockReservedInset: CGFloat {
+        translationPrimaryButtonHeight + 12
+    }
+
+    private var unifiedOverlayTopInset: CGFloat {
+        62
+    }
+
 
     private var translationGroupHorizontalPadding: CGFloat {
         12
@@ -1917,6 +1995,7 @@ struct TranslationView: View {
     // #endregion
 
     private var outputStatusReservedHeight: CGFloat { layoutTokens.outputStatusReservedHeight }
+    private var statusPanelHorizontalPadding: CGFloat { editorFontPointSize }
 
     @ViewBuilder
     private var outputStatusPanel: some View {
@@ -1924,7 +2003,7 @@ struct TranslationView: View {
             outputStatusOverlay
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, statusPanelHorizontalPadding)
         .frame(maxWidth: .infinity, minHeight: outputStatusReservedHeight, maxHeight: outputStatusReservedHeight, alignment: .leading)
         .background(
             colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30)
@@ -3203,6 +3282,8 @@ private final class TFMenuPreparationRunner {
 private struct IOSClutchSourceTextEditor: UIViewRepresentable {
     @Binding var text: String
     let fontSize: CGFloat
+    let additionalTopTextInset: CGFloat
+    let additionalBottomTextInset: CGFloat
     let highlightedRange: NSRange?
     let centerOnHighlightIfNeeded: Bool
     let topAlignOnHighlightScroll: Bool
@@ -3234,7 +3315,13 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         textView.smartDashesType = .no
         textView.smartQuotesType = .no
         textView.dataDetectorTypes = []
-        textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+        textView.textAlignment = .justified
+        textView.textContainerInset = UIEdgeInsets(
+            top: 6 + additionalTopTextInset,
+            left: 0,
+            bottom: 6 + additionalBottomTextInset,
+            right: 0
+        )
         textView.onPastedImage = onPastedImage
         context.coordinator.attachTextView(textView)
         return textView
@@ -3246,6 +3333,17 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         }
         if uiView.font?.pointSize != fontSize {
             uiView.font = UIFont.systemFont(ofSize: fontSize)
+        }
+        if uiView.textAlignment != .justified {
+            uiView.textAlignment = .justified
+        }
+        let desiredTopInset = 6 + additionalTopTextInset
+        let desiredBottomInset = 6 + additionalBottomTextInset
+        if uiView.textContainerInset.top != desiredTopInset
+            || uiView.textContainerInset.bottom != desiredBottomInset
+        {
+            uiView.textContainerInset.top = desiredTopInset
+            uiView.textContainerInset.bottom = desiredBottomInset
         }
         context.coordinator.updateScrollBehavior(lockDownwardScrollForRestore: lockDownwardScrollForRestore)
         context.coordinator.performProgrammaticUpdate {
@@ -3500,6 +3598,7 @@ private struct MacSourceTextEditor: NSViewRepresentable {
         textView.isAutomaticDataDetectionEnabled = false
         textView.font = NSFont.systemFont(ofSize: fontSize)
         textView.backgroundColor = NSColor.clear
+        textView.alignment = .justified
         textView.textContainerInset = NSSize(width: 0, height: 6)
         textView.onDropResolvedText = { droppedText in
             context.coordinator.updateTextFromDrop(droppedText)
@@ -3520,6 +3619,9 @@ private struct MacSourceTextEditor: NSViewRepresentable {
         }
         if textView.font?.pointSize != fontSize {
             textView.font = NSFont.systemFont(ofSize: fontSize)
+        }
+        if textView.alignment != .justified {
+            textView.alignment = .justified
         }
         if isComposingIME {
             return

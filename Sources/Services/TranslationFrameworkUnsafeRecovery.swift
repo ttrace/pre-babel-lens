@@ -152,9 +152,33 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
                     throw error
                 }
             }
-            log("availability=\(describe(status))")
+            var resolvedStatus = status
+            log("availability=\(describe(resolvedStatus))")
 
-            if status == .unsupported {
+            if resolvedStatus == .unsupported {
+                request.onDiagnosticEvent?(
+                    "translation-framework-recovery: unsupported-preflight-retry=1"
+                )
+                log("unsupported-preflight-retry=1")
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                do {
+                    resolvedStatus = try await resolvePairAvailabilityStatus(
+                        availability: availability,
+                        request: request,
+                        targetLanguage: targetLanguage
+                    )
+                    log("availability(retry)=\(describe(resolvedStatus))")
+                } catch {
+                    if isTranslationServiceConnectionError(error) {
+                        request.onDiagnosticEvent?(
+                            "translation-framework-recovery: transient-service-connection-error stage=availability(retry)"
+                        )
+                        log("availability(retry)-connection-error")
+                    }
+                }
+            }
+
+            if resolvedStatus == .unsupported {
                 log("unsupported-language-pairing")
                 if let missingLanguageKind = await diagnoseMissingLanguageKind(
                     sourceLanguage: request.sourceLanguage,
@@ -173,9 +197,11 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
 
             let translated: String
             do {
-                if status == .supported {
-                    log("preparing-download-or-consent")
-                    try await session.prepareTranslation()
+                if resolvedStatus != .unsupported {
+                    log("prewarming-session")
+                    try await performWithTimeout(stage: "prepare") {
+                        try await session.prepareTranslation()
+                    }
                     log("prepare-finished")
                 }
 
@@ -208,9 +234,11 @@ final class TranslationFrameworkUnsafeRecoveryController: ObservableObject, Unsa
                     )
                     try? await Task.sleep(nanoseconds: 250_000_000)
 
-                    if status == .supported {
+                    if resolvedStatus != .unsupported {
                         log("preparing-download-or-consent(retry)")
-                        try await session.prepareTranslation()
+                        try await performWithTimeout(stage: "prepare(retry)") {
+                            try await session.prepareTranslation()
+                        }
                         log("prepare-finished(retry)")
                     }
 
