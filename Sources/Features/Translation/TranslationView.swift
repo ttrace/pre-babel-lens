@@ -1331,11 +1331,24 @@ struct TranslationView: View {
             }
             combined += chunk
         }
-        return combined
+        return forceJustifiedParagraphStyle(combined)
     }
 
     private func justifiedAttributedText(_ text: String) -> AttributedString {
         let mutable = NSMutableAttributedString(string: text)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .justified
+        paragraph.lineBreakMode = .byWordWrapping
+        mutable.addAttribute(
+            .paragraphStyle,
+            value: paragraph,
+            range: NSRange(location: 0, length: mutable.length)
+        )
+        return AttributedString(mutable)
+    }
+
+    private func forceJustifiedParagraphStyle(_ text: AttributedString) -> AttributedString {
+        let mutable = NSMutableAttributedString(text)
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .justified
         paragraph.lineBreakMode = .byWordWrapping
