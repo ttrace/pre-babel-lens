@@ -4,7 +4,7 @@ set -euo pipefail
 EXECUTABLE_NAME="PreBabelLens"
 BUNDLE_NAME="zen-Babel"
 BUNDLE_ID="com.ttrace.prebabellens"
-VERSION="${VERSION:-0.8.2}"
+VERSION="${VERSION:-0.9.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 APPLE_ID="${APPLE_ID:-}"
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"

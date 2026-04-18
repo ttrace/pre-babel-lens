@@ -206,6 +206,26 @@ Prefer tests for:
   - URL scheme handoff (`prebabellens://import-shared`)
   - shared pasteboard fallback
 
+### Intentional Overlap Layout Rules (Important)
+Some parts of the iOS UI intentionally use overlap and are not "safe" by conventional layout standards.
+Do not normalize these to non-overlap designs unless the user explicitly asks.
+
+- Button-group overlap is intentional:
+  - Source and Translation button groups are intentionally overlaid on top of text-field wrappers.
+  - This is a core interaction design, not a temporary workaround.
+
+- For Source text, avoid moving/shrinking the field to dodge overlays:
+  - Keep the Source field spanning the wrapper from top to bottom.
+  - Adjust text start position with text insets/outsets (content offset), not with outer container padding that changes field geometry.
+
+- In overlap regions, prioritize visual composition over conservative spacing:
+  - Do not auto-add "safety" margins that separate controls from the field if doing so breaks intended overlap.
+  - Do not silently reintroduce header rows or extra gutters as a fallback.
+
+- If an overlap causes a real defect, prefer targeted fixes:
+  - Fix clipping/masking/z-order or text inset values.
+  - Do not replace the overlap architecture with a conventional non-overlap layout.
+
 ## Clutch and Scroll-Resize Policy
 Clutch interaction requirements:
 - In Clutch mode, tapping/cursoring in one field highlights the corresponding segment in the other field.

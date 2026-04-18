@@ -32,6 +32,7 @@
 "ui.dev.console" = "コンソール";
 "ui.section.source" = "入力";
 "ui.section.output" = "出力";
+"ui.placeholder.source_input" = "翻訳したい文章を入力してください";
 "ui.action.paste" = "貼り付け";
 "ui.action.import" = "読み込み";
 "ui.import.files" = "ファイル";
@@ -50,3 +51,5 @@
 "status.notice.same_language_untranslatable" = "同一言語のために翻訳できませんでした";
 "status.notice.ai_fallback_to_tf" = "AI出力できなかったため機械翻訳しました";
 "status.notice.unknown_source_language" = "元言語が不明だったため翻訳できませんでした";
+
+"ui.action.share" = "共有";

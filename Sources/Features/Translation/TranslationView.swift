@@ -66,6 +66,9 @@ struct TranslationView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var isImportLoading: Bool = false
     @State private var importToastPlacement: ImportToastPlacement = .bottom
+    @State private var isKeyboardPresented: Bool = false
+    @State private var keyboardBottomInset: CGFloat = 0
+    @State private var isIPadLandscapeLayoutActive: Bool = false
     #endif
     @State private var isMacCompactLayoutActive: Bool = false
     @State private var isIOSDesktopLayoutActive: Bool = false
@@ -138,13 +141,13 @@ struct TranslationView: View {
                         Color(red: 0.16, green: 0.19, blue: 0.22),
                     ]
                     : [
-                        Color(red: 0.98, green: 0.92, blue: 0.82).opacity(0.98),
+                        Color(red: 0.90, green: 0.90, blue: 0.91).opacity(0.98),
                         Color(red: 0.93, green: 0.90, blue: 0.88).opacity(0.98),
                     ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
-            .ignoresSafeArea()
+            .ignoresSafeArea(edges: [.horizontal, .bottom])
 
             contentLayout
                 .foregroundStyle(colorScheme == .dark ? .white : .primary)
@@ -160,6 +163,27 @@ struct TranslationView: View {
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+
+            if isKeyboardPresented && !isPadDevice {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button {
+                            dismissKeyboard()
+                        } label: {
+                            Image(systemName: "keyboard.chevron.compact.down.fill")
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 36, height: 36)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 12)
+                        .padding(.bottom, keyboardBottomInset + 2)
+                    }
+                }
+                .transition(.opacity)
+            }
             #endif
             #if canImport(Translation)
             if let configuration = viewModel.tfMenuPreparationConfiguration {
@@ -172,7 +196,7 @@ struct TranslationView: View {
             #endif
         }
         #if os(iOS)
-        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .ignoresSafeArea(.keyboard, edges: shouldIgnoreKeyboardSafeAreaBottom ? .bottom : [])
         #endif
         .onChange(of: viewModel.isTranslating) { _, isTranslating in
             if isTranslating {
@@ -201,6 +225,17 @@ struct TranslationView: View {
                 return
             }
         }
+        #if os(iOS)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            updateKeyboardPresentation(notification)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isKeyboardPresented = false
+                keyboardBottomInset = 0
+            }
+        }
+        #endif
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: .pblImportHUDLoadingChanged)) { notification in
             guard let isLoading = notification.userInfo?[ImportHUDNotificationKeys.loading] as? Bool else { return }
@@ -267,18 +302,6 @@ struct TranslationView: View {
                 handleSharedImportIfNeeded: {}
             )
             #endif
-            #if os(iOS)
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button {
-                        dismissKeyboard()
-                    } label: {
-                        Image(systemName: "keyboard.chevron.compact.down")
-                    }
-                }
-            }
-            #endif
         #else
             #if os(iOS)
             baseView
@@ -304,16 +327,6 @@ struct TranslationView: View {
                         await handlePickedPhotoItem(item)
                     }
                 }
-                .toolbar {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button {
-                            dismissKeyboard()
-                        } label: {
-                            Image(systemName: "keyboard.chevron.compact.down")
-                        }
-                    }
-                }
             #else
             baseView
                 .translationViewLifecycleModifiers(
@@ -332,19 +345,19 @@ struct TranslationView: View {
         #if os(iOS)
         GeometryReader { proxy in
             let isPortrait = proxy.size.height > proxy.size.width
-            let usesDesktopLikeIOSLayout = !isPortrait && proxy.size.width >= compactLayoutThresholdWidth
+            let usesSideBySideIOSLayout = isWideIOSLayout && !isPortrait
             let contentTopPadding: CGFloat = 8
             let contentBottomPadding: CGFloat = 2
-            let verticalGap: CGFloat = 14
             let desktopColumnGap: CGFloat = 9
-            let contentHorizontalPadding: CGFloat = usesDesktopLikeIOSLayout ? 36 : 12
+            let contentHorizontalPadding: CGFloat = 12
             let compactStatusBottomMargin: CGFloat = contentHorizontalPadding / 2
+            let usesStackedCompactLayout = !usesSideBySideIOSLayout
+            let verticalGap: CGFloat = usesStackedCompactLayout ? 0 : 14
             let availableHeight = max(0, proxy.size.height - contentTopPadding - contentBottomPadding)
             let splitHeight = max(
                 140,
                 (availableHeight - verticalGap - outputStatusReservedHeight - compactStatusBottomMargin) / 2
             )
-            let usesStackedCompactLayout = !(usesDesktopLikeIOSLayout || (isWideIOSLayout && !isPortrait))
             let compactHeights = compactStackedHeights(
                 availableHeight: availableHeight,
                 verticalGap: verticalGap,
@@ -354,15 +367,8 @@ struct TranslationView: View {
             )
 
             VStack(alignment: .leading, spacing: 14) {
-                if usesDesktopLikeIOSLayout {
-                    HStack(alignment: .top, spacing: desktopColumnGap) {
-                        sourceCard
-                        outputColumnWithStatus()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .padding(.bottom, desktopColumnGap)
-                } else if isWideIOSLayout && !isPortrait {
-                    HStack(alignment: .top, spacing: 14) {
+                if usesSideBySideIOSLayout {
+                    HStack(alignment: .top, spacing: 0) {
                         sourceCard
                         outputColumnWithStatus()
                     }
@@ -387,15 +393,16 @@ struct TranslationView: View {
             .padding(.bottom, contentBottomPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .onAppear {
-                isIOSDesktopLayoutActive = usesDesktopLikeIOSLayout
+                isIOSDesktopLayoutActive = false
                 updateCompactStackedLayoutState(isActive: usesStackedCompactLayout)
+                isIPadLandscapeLayoutActive = isPadDevice && usesSideBySideIOSLayout
             }
             .onChange(of: proxy.size) { _, newSize in
                 let portrait = newSize.height > newSize.width
-                isIOSDesktopLayoutActive = !portrait && newSize.width >= compactLayoutThresholdWidth
-                let usesDesktop = !portrait && newSize.width >= compactLayoutThresholdWidth
                 let usesWideLandscape = isWideIOSLayout && !portrait
-                updateCompactStackedLayoutState(isActive: !(usesDesktop || usesWideLandscape))
+                isIOSDesktopLayoutActive = false
+                updateCompactStackedLayoutState(isActive: !usesWideLandscape)
+                isIPadLandscapeLayoutActive = isPadDevice && usesWideLandscape
             }
             .animation(.easeInOut(duration: 0.24), value: isCompactOutputReadingMode)
         }
@@ -505,7 +512,30 @@ struct TranslationView: View {
             Menu {
                 translationModeToggleMenuItem
                 Divider()
-                ForEach(viewModel.targetLanguageOptions) { option in
+                let recentOptions = viewModel.recentTargetLanguageOptions()
+                let remainingOptions = viewModel.remainingTargetLanguageOptionsExcludingRecent()
+                ForEach(recentOptions) { option in
+                    Button {
+                        viewModel.selectTargetLanguageFromMenu(option.code)
+                    } label: {
+                        let baseLabel = option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle)
+                        let decoratedLabel = decoratedTargetLanguageMenuLabel(baseLabel, targetLanguageCode: option.code)
+                        if option.code == viewModel.targetLanguage {
+                            Label(decoratedLabel, systemImage: "checkmark")
+                        } else {
+                            Text(decoratedLabel)
+                        }
+                    }
+                    .disabled(viewModel.isTargetLanguageSelectionDisabled(option.code))
+                    #if os(iOS)
+                    .opacity(viewModel.isTargetLanguageSelectionDisabled(option.code) ? 0.3 : 1.0)
+                    #endif
+                    .help(viewModel.targetLanguageSelectionHelpText(for: option.code) ?? "")
+                }
+                if !recentOptions.isEmpty && !remainingOptions.isEmpty {
+                    Divider()
+                }
+                ForEach(remainingOptions) { option in
                     Button {
                         viewModel.selectTargetLanguageFromMenu(option.code)
                     } label: {
@@ -551,7 +581,30 @@ struct TranslationView: View {
             Menu {
                 translationModeToggleMenuItem
                 Divider()
-                ForEach(viewModel.targetLanguageOptions) { option in
+                let recentOptions = viewModel.recentTargetLanguageOptions()
+                let remainingOptions = viewModel.remainingTargetLanguageOptionsExcludingRecent()
+                ForEach(recentOptions) { option in
+                    Button {
+                        viewModel.selectTargetLanguageFromMenu(option.code)
+                    } label: {
+                        let baseLabel = option.menuLabel(showCode: developerModeEnabled, style: currentLabelStyle)
+                        let decoratedLabel = decoratedTargetLanguageMenuLabel(baseLabel, targetLanguageCode: option.code)
+                        if option.code == viewModel.targetLanguage {
+                            Label(decoratedLabel, systemImage: "checkmark")
+                        } else {
+                            Text(decoratedLabel)
+                        }
+                    }
+                    .disabled(viewModel.isTargetLanguageSelectionDisabled(option.code))
+                    #if os(iOS)
+                    .opacity(viewModel.isTargetLanguageSelectionDisabled(option.code) ? 0.3 : 1.0)
+                    #endif
+                    .help(viewModel.targetLanguageSelectionHelpText(for: option.code) ?? "")
+                }
+                if !recentOptions.isEmpty && !remainingOptions.isEmpty {
+                    Divider()
+                }
+                ForEach(remainingOptions) { option in
                     Button {
                         viewModel.selectTargetLanguageFromMenu(option.code)
                     } label: {
@@ -698,6 +751,22 @@ struct TranslationView: View {
         #endif
     }
 
+    private var isPadDevice: Bool {
+        #if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .pad
+        #else
+        false
+        #endif
+    }
+
+    private var shouldIgnoreKeyboardSafeAreaBottom: Bool {
+        #if os(iOS)
+        !isIPadLandscapeLayoutActive
+        #else
+        true
+        #endif
+    }
+
     private var usesCompactDesktopLayout: Bool {
         #if os(macOS)
         isMacCompactLayoutActive
@@ -735,49 +804,51 @@ struct TranslationView: View {
 
     // #region MARK: Subviews
     private var sourceCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text(localized("ui.section.source", defaultValue: "Source"))
-                    .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                Spacer()
-                #if os(iOS)
-                Menu {
-                    Button {
-                        presentFileImporter()
-                    } label: {
-                        Label(
-                            localized("ui.import.files", defaultValue: "Files"),
-                            systemImage: isFileImportPickerPresented ? "folder.fill" : "folder"
-                        )
-                    }
+        VStack(alignment: .leading, spacing: isUnifiedStackedFieldLayout ? 0 : 14) {
+            if !isUnifiedStackedFieldLayout {
+                HStack {
+                    Text(localized("ui.section.source", defaultValue: "Source"))
+                        .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer()
+                    #if os(iOS)
+                    Menu {
+                        Button {
+                            presentFileImporter()
+                        } label: {
+                            Label(
+                                localized("ui.import.files", defaultValue: "Files"),
+                                systemImage: isFileImportPickerPresented ? "folder.fill" : "folder"
+                            )
+                        }
 
-                    Button {
-                        presentPhotoPicker()
+                        Button {
+                            presentPhotoPicker()
+                        } label: {
+                            Label(
+                                localized("ui.import.album", defaultValue: "Album"),
+                                systemImage: isPhotoPickerPresented ? "photo.on.rectangle.angled.fill" : "photo.on.rectangle.angled"
+                            )
+                        }
                     } label: {
-                        Label(
-                            localized("ui.import.album", defaultValue: "Album"),
-                            systemImage: isPhotoPickerPresented ? "photo.on.rectangle.angled.fill" : "photo.on.rectangle.angled"
-                        )
+                        Image(systemName: "square.and.arrow.down")
                     }
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
-                }
-                .menuOrder(.fixed)
-                .buttonStyle(.bordered)
-                .accessibilityLabel(localized("ui.action.import", defaultValue: "Import"))
-                #endif
-                Button(localized("ui.action.paste", defaultValue: "Paste"), action: pasteInputFromClipboard)
+                    .menuOrder(.fixed)
                     .buttonStyle(.bordered)
-                Button {
-                    viewModel.clearSourceTextAndResetLanguageState()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 15, weight: .semibold))
+                    .accessibilityLabel(localized("ui.action.import", defaultValue: "Import"))
+                    #endif
+                    Button(localized("ui.action.paste", defaultValue: "Paste"), action: pasteInputFromClipboard)
+                        .buttonStyle(.bordered)
+                    Button {
+                        clearSourceAndResetRuntimeState()
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel(localized("ui.action.clear", defaultValue: "Clear"))
                 }
-                .buttonStyle(.bordered)
-                .accessibilityLabel(localized("ui.action.clear", defaultValue: "Clear"))
             }
 
             sourceEditor
@@ -785,7 +856,37 @@ struct TranslationView: View {
         .padding(cardOuterPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         #if os(iOS)
-        .background(Color.clear)
+        .background {
+            if isUnifiedStackedFieldLayout {
+                sourceFieldWrapperShape.fill(iOSFieldBackgroundColor)
+            } else {
+                Color.clear
+            }
+        }
+        .overlay {
+            if isUnifiedStackedFieldLayout {
+                sourceFieldWrapperShape
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            #if os(iOS)
+            if isUnifiedStackedFieldLayout, !isSourceGroupTopDocked {
+                sourceOverlayButtonGroup
+                    .padding(.bottom, 0)
+                    .zIndex(3)
+            }
+            #endif
+        }
+        .overlay(alignment: .top) {
+            #if os(iOS)
+            if isUnifiedStackedFieldLayout, isSourceGroupTopDocked {
+                sourceOverlayButtonGroup
+                    .padding(.top, 0)
+                    .zIndex(3)
+            }
+            #endif
+        }
         .overlay {
             if isImportLoading {
                 importHUDCapsule(text: importLoadingToastTitle)
@@ -825,6 +926,8 @@ struct TranslationView: View {
         IOSClutchSourceTextEditor(
             text: $viewModel.inputText,
             fontSize: editorFontPointSize,
+            additionalTopTextInset: isSourceGroupTopDocked ? sourceTopDockReservedInset : 0,
+            additionalBottomTextInset: isUnifiedStackedFieldLayout && !isSourceGroupTopDocked ? sourceGroupReservedBottomInset : 0,
             highlightedRange: sourceHighlightRange,
             centerOnHighlightIfNeeded: shouldAutoCenterSourceForClutch,
             topAlignOnHighlightScroll: shouldTopAlignSourceForClutch,
@@ -843,13 +946,46 @@ struct TranslationView: View {
         )
             .frame(maxHeight: .infinity, alignment: .top)
             .simultaneousGesture(editorPinchGesture(host: .source), including: .gesture)
-            .padding(layoutTokens.editorInnerPadding)
+            .padding(.top, layoutTokens.editorInnerPadding)
+            .padding(.bottom, layoutTokens.editorInnerPadding)
+            .padding(.leading, layoutTokens.editorInnerPadding)
+            .padding(.trailing, layoutTokens.editorInnerPadding)
             .font(.system(size: editorFontPointSize))
-            .background(colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30))
-            .overlay(
-                RoundedRectangle(cornerRadius: editorCornerRadius)
-                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-            )
+            .background {
+                if isUnifiedStackedFieldLayout {
+                    Color.clear
+                } else {
+                    RoundedRectangle(cornerRadius: editorCornerRadius)
+                        .fill(iOSFieldBackgroundColor)
+                }
+            }
+            .overlay {
+                if !isUnifiedStackedFieldLayout {
+                    RoundedRectangle(cornerRadius: editorCornerRadius)
+                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                if isUnifiedStackedFieldLayout,
+                   viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(
+                        localized(
+                            "ui.placeholder.source_input",
+                            defaultValue: "Enter text to translate."
+                        )
+                    )
+                        .font(.system(size: editorFontPointSize))
+                        .foregroundStyle(.secondary.opacity(0.85))
+                        .padding(.leading, layoutTokens.editorInnerPadding + 8)
+                        .padding(
+                            .top,
+                            layoutTokens.editorInnerPadding
+                                + 14
+                                + (isSourceGroupTopDocked ? sourceTopDockReservedInset : 0)
+                        )
+                        .allowsHitTesting(false)
+                }
+            }
             .overlay(alignment: .top) {
                 pinchOverlay(host: .source)
             }
@@ -882,9 +1018,21 @@ struct TranslationView: View {
     }
 
     private var outputContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if usesInlineLanguageMenuInOutputCard {
-                ZStack {
+        VStack(alignment: .leading, spacing: isUnifiedStackedFieldLayout ? 0 : 14) {
+            if !isUnifiedStackedFieldLayout {
+                if usesInlineLanguageMenuInOutputCard {
+                    ZStack {
+                        HStack {
+                            Text(localized("ui.section.output", defaultValue: "Output"))
+                                .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                            Spacer()
+                            outputCopyButton
+                        }
+                        outputHeaderCenteredControlGroup
+                    }
+                } else {
                     HStack {
                         Text(localized("ui.section.output", defaultValue: "Output"))
                             .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
@@ -892,26 +1040,18 @@ struct TranslationView: View {
                             .fixedSize(horizontal: true, vertical: false)
                         Spacer()
                         outputCopyButton
+                        outputTranslateButton
                     }
-                    outputHeaderCenteredControlGroup
-                }
-            } else {
-                HStack {
-                    Text(localized("ui.section.output", defaultValue: "Output"))
-                        .font(.system(size: layoutTokens.sectionTitleFontSize, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Spacer()
-                    outputCopyButton
-                    outputTranslateButton
                 }
             }
 
+            let topInset: CGFloat = isUnifiedStackedFieldLayout ? unifiedOverlayTopInset : 12
             ScrollViewReader { proxy in
                 ScrollView {
                     outputSegmentsView
-                        .padding(.top, 12)
-                        .padding(.horizontal, 12)
+                        .padding(.top, topInset)
+                        .padding(.leading, 12)
+                        .padding(.trailing, 12)
                         .padding(.bottom, 12)
                 }
                 .onChange(of: clutchSelectedSegmentIndex) { _, segmentIndex in
@@ -950,13 +1090,29 @@ struct TranslationView: View {
             #endif
             .clipped()
             #if os(iOS)
-            .background(colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30))
-            .overlay(
-                RoundedRectangle(cornerRadius: editorCornerRadius)
-                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-            )
+            .background {
+                if isUnifiedStackedFieldLayout {
+                    Color.clear
+                } else {
+                    RoundedRectangle(cornerRadius: editorCornerRadius)
+                        .fill(iOSFieldBackgroundColor)
+                }
+            }
+            .overlay {
+                if !isUnifiedStackedFieldLayout {
+                    RoundedRectangle(cornerRadius: editorCornerRadius)
+                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                }
+            }
             .overlay(alignment: .top) {
                 pinchOverlay(host: .output)
+            }
+            .overlay(alignment: .top) {
+                if isUnifiedStackedFieldLayout {
+                    outputOverlayTopControls
+                        .padding(.top, 0)
+                        .padding(.horizontal, 0)
+                }
             }
             #else
             .background(
@@ -968,11 +1124,45 @@ struct TranslationView: View {
     }
 
     @ViewBuilder
+    private var outputOverlayTopControls: some View {
+        outputHeaderCenteredControlGroup
+    }
+
+    @ViewBuilder
     private var outputHeaderCenteredControlGroup: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: translationGroupInnerSpacing) {
             inlineLanguageMenu
             outputTranslateButton
+            #if os(iOS)
+            outputShareButton
+            #endif
         }
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.horizontal, translationGroupHorizontalPadding)
+        .padding(.vertical, 7)
+        .background(.thinMaterial, in: outputTopDockShape)
+        .overlay {
+            outputTopDockShape
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.14))
+                .allowsHitTesting(false)
+        }
+        .overlay {
+            outputTopDockShape
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(colorScheme == .dark ? 0.16 : 0.24),
+                            Color.white.opacity(0.01),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .allowsHitTesting(false)
+        }
+        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.20 : 0.10), radius: 6, y: 2)
+        .zIndex(3)
+        .opacity(viewModel.targetLanguageOptions.isEmpty ? 0.55 : 1)
     }
 
     @ViewBuilder
@@ -981,11 +1171,36 @@ struct TranslationView: View {
             copyOutputToClipboard()
         } label: {
             Image(systemName: "doc.on.doc")
+                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 34, height: 34)
+                .background(.thinMaterial, in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(Color.white.opacity(colorScheme == .dark ? 0.32 : 0.70), lineWidth: 1)
+                }
+        }
+        .buttonStyle(InteractiveSymbolButtonStyle())
+        .help(localized("ui.action.copy_output", defaultValue: "Copy output"))
+        .disabled(viewModel.translatedText.isEmpty)
+    }
+
+    #if os(iOS)
+    @ViewBuilder
+    private var outputShareButton: some View {
+        ShareLink(item: viewModel.translatedText) {
+            Image(systemName: "square.and.arrow.up")
                 .font(.system(size: 16, weight: .semibold))
         }
         .buttonStyle(.bordered)
-        .help(localized("ui.action.copy_output", defaultValue: "Copy output"))
+        .accessibilityLabel(localized("ui.action.share", defaultValue: "Share"))
         .disabled(viewModel.translatedText.isEmpty)
+    }
+    #endif
+
+    @ViewBuilder
+    private var outputOverlayButtonGroup: some View {
+        HStack(spacing: 8) { outputCopyButton }
     }
 
     @ViewBuilder
@@ -1000,8 +1215,10 @@ struct TranslationView: View {
                 .symbolRenderingMode(.hierarchical)
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(.white)
-                .frame(minWidth: 44, minHeight: 34)
-                .padding(.horizontal, 8)
+                .frame(
+                    width: translationPrimaryButtonWidth,
+                    height: translationPrimaryButtonHeight
+                )
                 .background(
                     Capsule()
                         .fill(Color.blue)
@@ -1028,7 +1245,32 @@ struct TranslationView: View {
         .padding(cardOuterPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         #if os(iOS)
-        .background(Color.clear)
+        .clipShape(outputFieldClipShape)
+        .overlay(alignment: .bottomTrailing) {
+            if isUnifiedStackedFieldLayout {
+                outputOverlayButtonGroup
+                    .padding(.trailing, 10)
+                    .padding(.bottom, outputStatusReservedHeight + 10)
+                    .zIndex(8)
+            }
+        }
+        .background {
+            if isUnifiedStackedFieldLayout {
+                outputFieldWrapperShape.fill(iOSFieldBackgroundColor)
+            } else {
+                Color.clear
+            }
+        }
+        .overlay {
+            if isUnifiedStackedFieldLayout {
+                outputFieldWrapperShape
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                Rectangle()
+                    .fill(iOSFieldBackgroundColor)
+                    .frame(height: 1)
+                    .allowsHitTesting(false)
+            }
+        }
         #else
         .background {
             if usesCompactDesktopLayout {
@@ -1047,7 +1289,7 @@ struct TranslationView: View {
             Color.clear
                 .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
         } else if viewModel.segmentOutputs.isEmpty {
-            Text(viewModel.translatedText)
+            Text(justifiedAttributedText(viewModel.translatedText))
                 .font(.system(size: editorFontPointSize))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1067,7 +1309,7 @@ struct TranslationView: View {
         var combined = AttributedString()
         for index in viewModel.segmentOutputs.indices {
             let segment = viewModel.segmentOutputs[index]
-            var chunk = AttributedString(segment.translatedText + joinerAfterOutputSegment(at: index))
+            var chunk = justifiedAttributedText(segment.translatedText + joinerAfterOutputSegment(at: index))
             chunk.foregroundColor = defaultOutputTextColor
             if segment.isUnsafeFallback {
                 if segment.isUnsafeRecoveredByTranslationFramework {
@@ -1089,7 +1331,33 @@ struct TranslationView: View {
             }
             combined += chunk
         }
-        return combined
+        return forceJustifiedParagraphStyle(combined)
+    }
+
+    private func justifiedAttributedText(_ text: String) -> AttributedString {
+        let mutable = NSMutableAttributedString(string: text)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .justified
+        paragraph.lineBreakMode = .byWordWrapping
+        mutable.addAttribute(
+            .paragraphStyle,
+            value: paragraph,
+            range: NSRange(location: 0, length: mutable.length)
+        )
+        return AttributedString(mutable)
+    }
+
+    private func forceJustifiedParagraphStyle(_ text: AttributedString) -> AttributedString {
+        let mutable = NSMutableAttributedString(text)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .justified
+        paragraph.lineBreakMode = .byWordWrapping
+        mutable.addAttribute(
+            .paragraphStyle,
+            value: paragraph,
+            range: NSRange(location: 0, length: mutable.length)
+        )
+        return AttributedString(mutable)
     }
 
     private func outputSegmentTapURL(for segmentIndex: Int) -> URL? {
@@ -1290,6 +1558,9 @@ struct TranslationView: View {
 
     private var cardOuterPadding: CGFloat {
         #if os(iOS)
+        if isUnifiedStackedFieldLayout {
+            return 0
+        }
         if isIOSDesktopLayoutActive {
             return layoutTokens.cardOuterPadding / 2
         }
@@ -1308,6 +1579,239 @@ struct TranslationView: View {
         }
         #endif
         return layoutTokens.editorCornerRadius
+    }
+
+    #if os(iOS)
+    private var isUnifiedStackedFieldLayout: Bool {
+        !isIOSDesktopLayoutActive
+    }
+
+    private var iOSFieldBackgroundColor: Color {
+        colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30)
+    }
+
+    private var unifiedFieldWrapperCornerRadius: CGFloat {
+        18
+    }
+
+    private var sourceFieldWrapperShape: AnyShape {
+        let corners: UIRectCorner = isIPadLandscapeLayoutActive
+            ? [.topLeft, .bottomLeft]
+            : [.topLeft, .topRight]
+        return AnyShape(
+            RoundedCornerShape(
+                corners: corners,
+                radius: unifiedFieldWrapperCornerRadius
+            )
+        )
+    }
+
+    private var outputFieldWrapperShape: AnyShape {
+        let corners: UIRectCorner = isIPadLandscapeLayoutActive
+            ? [.topRight, .bottomRight]
+            : [.bottomLeft, .bottomRight]
+        return AnyShape(
+            RoundedCornerShape(
+                corners: corners,
+                radius: unifiedFieldWrapperCornerRadius
+            )
+        )
+    }
+
+    private var outputFieldClipShape: AnyShape {
+        isUnifiedStackedFieldLayout ? outputFieldWrapperShape : AnyShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var sourceOverlayButtonGroup: some View {
+        let hasSourceText = !viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let canImportOrPaste = !isImportLoading && !viewModel.isTranslating && !hasSourceText
+        HStack(spacing: sourceGroupSymbolSpacing) {
+            Button {
+                presentFileImporter()
+            } label: {
+                Image(systemName: "folder")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(
+                        .system(
+                            size: canImportOrPaste ? sourceGroupActiveSymbolSize : sourceGroupInactiveSymbolSize,
+                            weight: .semibold
+                        )
+                    )
+                    .frame(
+                        width: canImportOrPaste ? translationPrimaryButtonWidth : sourceGroupInactiveButtonWidth,
+                        height: canImportOrPaste ? translationPrimaryButtonHeight : sourceGroupInactiveButtonHeight
+                    )
+            }
+            .buttonStyle(InteractiveSymbolButtonStyle())
+            .accessibilityLabel(localized("ui.import.files", defaultValue: "Files"))
+            .disabled(!canImportOrPaste)
+
+            Button {
+                presentPhotoPicker()
+            } label: {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(
+                        .system(
+                            size: canImportOrPaste ? sourceGroupActiveSymbolSize : sourceGroupInactiveSymbolSize,
+                            weight: .semibold
+                        )
+                    )
+                    .frame(
+                        width: canImportOrPaste ? translationPrimaryButtonWidth : sourceGroupInactiveButtonWidth,
+                        height: canImportOrPaste ? translationPrimaryButtonHeight : sourceGroupInactiveButtonHeight
+                    )
+            }
+            .buttonStyle(InteractiveSymbolButtonStyle())
+            .accessibilityLabel(localized("ui.import.album", defaultValue: "Album"))
+            .disabled(!canImportOrPaste)
+
+            Button(action: pasteInputFromClipboard) {
+                Image(systemName: "doc.on.clipboard")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(
+                        .system(
+                            size: canImportOrPaste ? sourceGroupActiveSymbolSize : sourceGroupInactiveSymbolSize,
+                            weight: .semibold
+                        )
+                    )
+                    .frame(
+                        width: canImportOrPaste ? translationPrimaryButtonWidth : sourceGroupInactiveButtonWidth,
+                        height: canImportOrPaste ? translationPrimaryButtonHeight : sourceGroupInactiveButtonHeight
+                    )
+            }
+            .buttonStyle(InteractiveSymbolButtonStyle())
+            .accessibilityLabel(localized("ui.action.paste", defaultValue: "Paste"))
+            .disabled(!canImportOrPaste)
+
+            Button {
+                clearSourceAndResetRuntimeState()
+            } label: {
+                Image(systemName: "trash")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(
+                        .system(
+                            size: hasSourceText ? sourceGroupActiveSymbolSize : sourceGroupInactiveSymbolSize,
+                            weight: .semibold
+                        )
+                    )
+                    .frame(
+                        width: hasSourceText ? translationPrimaryButtonWidth : sourceGroupInactiveButtonWidth,
+                        height: hasSourceText ? translationPrimaryButtonHeight : sourceGroupInactiveButtonHeight
+                    )
+            }
+            .buttonStyle(InteractiveSymbolButtonStyle())
+            .accessibilityLabel(localized("ui.action.clear", defaultValue: "Clear"))
+            .disabled(!hasSourceText)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.thinMaterial, in: sourceDockShape)
+    }
+
+    #else
+    private var isUnifiedStackedFieldLayout: Bool { false }
+    #endif
+
+    private var sourceBottomDockShape: AnyShape {
+        #if os(iOS)
+        AnyShape(
+            RoundedCornerShape(
+                corners: [.topLeft, .topRight],
+                radius: 16
+            )
+        )
+        #else
+        AnyShape(Capsule())
+        #endif
+    }
+
+    private var sourceTopDockShape: AnyShape {
+        #if os(iOS)
+        AnyShape(
+            RoundedCornerShape(
+                corners: [.bottomLeft, .bottomRight],
+                radius: 16
+            )
+        )
+        #else
+        AnyShape(Capsule())
+        #endif
+    }
+
+    private var sourceDockShape: AnyShape {
+        isSourceGroupTopDocked ? sourceTopDockShape : sourceBottomDockShape
+    }
+
+    private var outputTopDockShape: AnyShape {
+        #if os(iOS)
+        AnyShape(
+            RoundedCornerShape(
+                corners: [.bottomLeft, .bottomRight],
+                radius: 16
+            )
+        )
+        #else
+        AnyShape(Capsule())
+        #endif
+    }
+
+    private var translationGroupInnerSpacing: CGFloat {
+        8
+    }
+
+    private var translationPrimaryButtonWidth: CGFloat {
+        60
+    }
+
+    private var translationPrimaryButtonHeight: CGFloat {
+        34
+    }
+
+    private var sourceGroupSymbolSpacing: CGFloat {
+        4
+    }
+
+    private var sourceGroupInactiveButtonWidth: CGFloat {
+        44
+    }
+
+    private var sourceGroupInactiveButtonHeight: CGFloat {
+        28
+    }
+
+    private var sourceGroupActiveSymbolSize: CGFloat {
+        20
+    }
+
+    private var sourceGroupInactiveSymbolSize: CGFloat {
+        15
+    }
+
+    private var isSourceGroupTopDocked: Bool {
+        #if os(iOS)
+        isUnifiedStackedFieldLayout && !isCompactStackedLayoutActive
+        #else
+        false
+        #endif
+    }
+
+    private var sourceGroupReservedBottomInset: CGFloat {
+        translationPrimaryButtonHeight + 18
+    }
+
+    private var sourceTopDockReservedInset: CGFloat {
+        translationPrimaryButtonHeight + 12
+    }
+
+    private var unifiedOverlayTopInset: CGFloat {
+        62
+    }
+
+
+    private var translationGroupHorizontalPadding: CGFloat {
+        12
     }
 
     private var editorMinHeight: CGFloat {
@@ -1556,6 +2060,7 @@ struct TranslationView: View {
     // #endregion
 
     private var outputStatusReservedHeight: CGFloat { layoutTokens.outputStatusReservedHeight }
+    private var statusPanelHorizontalPadding: CGFloat { editorFontPointSize }
 
     @ViewBuilder
     private var outputStatusPanel: some View {
@@ -1563,7 +2068,7 @@ struct TranslationView: View {
             outputStatusOverlay
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, statusPanelHorizontalPadding)
         .frame(maxWidth: .infinity, minHeight: outputStatusReservedHeight, maxHeight: outputStatusReservedHeight, alignment: .leading)
         .background(
             colorScheme == .dark ? Color.black.opacity(0.24) : Color.white.opacity(0.30)
@@ -1713,6 +2218,13 @@ struct TranslationView: View {
                 viewModel.handleSourceTextPasted(text)
             }
         #endif
+    }
+
+    private func clearSourceAndResetRuntimeState() {
+        #if canImport(Translation)
+        unsafeRecoveryController.clearPendingRecoveryState()
+        #endif
+        viewModel.clearSourceTextAndResetLanguageState()
     }
 
     #if os(macOS)
@@ -2592,6 +3104,31 @@ struct TranslationView: View {
         viewModel.refreshLanguageMenuSourceLanguage()
     }
 
+    private func updateKeyboardPresentation(_ notification: Notification) {
+        guard
+            let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue
+        else { return }
+
+        let keyboardFrame = frameValue.cgRectValue
+        let activeSceneScreenHeight =
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first(where: { $0.activationState == .foregroundActive })?
+                .screen.bounds.height
+        let fallbackSceneScreenHeight =
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first?
+                .screen.bounds.height
+        let screenHeight = activeSceneScreenHeight ?? fallbackSceneScreenHeight ?? keyboardFrame.maxY
+        let overlap = max(0, screenHeight - keyboardFrame.minY)
+
+        withAnimation(.easeInOut(duration: 0.18)) {
+            keyboardBottomInset = overlap
+            isKeyboardPresented = overlap > 0
+        }
+    }
+
     @ViewBuilder
     private func pinchOverlay(host: PinchOverlayHost) -> some View {
         if let pinchOverlayText, pinchOverlayHost == host {
@@ -2810,6 +3347,8 @@ private final class TFMenuPreparationRunner {
 private struct IOSClutchSourceTextEditor: UIViewRepresentable {
     @Binding var text: String
     let fontSize: CGFloat
+    let additionalTopTextInset: CGFloat
+    let additionalBottomTextInset: CGFloat
     let highlightedRange: NSRange?
     let centerOnHighlightIfNeeded: Bool
     let topAlignOnHighlightScroll: Bool
@@ -2841,10 +3380,15 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         textView.smartDashesType = .no
         textView.smartQuotesType = .no
         textView.dataDetectorTypes = []
-        textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+        textView.textAlignment = .justified
+        textView.textContainerInset = UIEdgeInsets(
+            top: 6 + additionalTopTextInset,
+            left: 0,
+            bottom: 6 + additionalBottomTextInset,
+            right: 0
+        )
         textView.onPastedImage = onPastedImage
         context.coordinator.attachTextView(textView)
-        textView.inputAccessoryView = context.coordinator.makeKeyboardAccessoryToolbar()
         return textView
     }
 
@@ -2854,6 +3398,17 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
         }
         if uiView.font?.pointSize != fontSize {
             uiView.font = UIFont.systemFont(ofSize: fontSize)
+        }
+        if uiView.textAlignment != .justified {
+            uiView.textAlignment = .justified
+        }
+        let desiredTopInset = 6 + additionalTopTextInset
+        let desiredBottomInset = 6 + additionalBottomTextInset
+        if uiView.textContainerInset.top != desiredTopInset
+            || uiView.textContainerInset.bottom != desiredBottomInset
+        {
+            uiView.textContainerInset.top = desiredTopInset
+            uiView.textContainerInset.bottom = desiredBottomInset
         }
         context.coordinator.updateScrollBehavior(lockDownwardScrollForRestore: lockDownwardScrollForRestore)
         context.coordinator.performProgrammaticUpdate {
@@ -2905,24 +3460,6 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
             isProgrammaticUpdateInProgress = true
             action()
             isProgrammaticUpdateInProgress = false
-        }
-
-        func makeKeyboardAccessoryToolbar() -> UIToolbar {
-            let toolbar = UIToolbar()
-            toolbar.sizeToFit()
-
-            let spacer = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-            let doneStyle: UIBarButtonItem.Style
-            if #available(iOS 26.0, *) {
-                doneStyle = .prominent
-            } else {
-                doneStyle = .done
-            }
-            let doneImage = UIImage(systemName: "keyboard.chevron.compact.down")
-            let done = UIBarButtonItem(image: doneImage, style: doneStyle, target: self, action: #selector(doneTapped))
-
-            toolbar.items = [spacer, done]
-            return toolbar
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -2977,9 +3514,6 @@ private struct IOSClutchSourceTextEditor: UIViewRepresentable {
             onScrollStateChanged(scrollDistanceFromTop, topSpringDistance, scrollView.isDragging)
         }
 
-        @objc private func doneTapped() {
-            textView?.resignFirstResponder()
-        }
     }
 }
 
@@ -3129,6 +3663,7 @@ private struct MacSourceTextEditor: NSViewRepresentable {
         textView.isAutomaticDataDetectionEnabled = false
         textView.font = NSFont.systemFont(ofSize: fontSize)
         textView.backgroundColor = NSColor.clear
+        textView.alignment = .justified
         textView.textContainerInset = NSSize(width: 0, height: 6)
         textView.onDropResolvedText = { droppedText in
             context.coordinator.updateTextFromDrop(droppedText)
@@ -3149,6 +3684,9 @@ private struct MacSourceTextEditor: NSViewRepresentable {
         }
         if textView.font?.pointSize != fontSize {
             textView.font = NSFont.systemFont(ofSize: fontSize)
+        }
+        if textView.alignment != .justified {
+            textView.alignment = .justified
         }
         if isComposingIME {
             return
@@ -3930,6 +4468,51 @@ enum SourceDropImport {
 }
 
 #endif
+
+#if os(iOS)
+private struct RoundedCornerShape: Shape {
+    var corners: UIRectCorner
+    var radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let bezierPath = UIBezierPath(
+            roundedRect: rect,
+            byRoundingCorners: corners,
+            cornerRadii: CGSize(width: radius, height: radius)
+        )
+        return Path(bezierPath.cgPath)
+    }
+}
+#endif
+
+private struct InteractiveSymbolButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        InteractiveSymbolButtonBody(configuration: configuration)
+    }
+}
+
+private struct InteractiveSymbolButtonBody: View {
+    let configuration: InteractiveSymbolButtonStyle.Configuration
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        configuration.label
+            .foregroundStyle(foregroundColor)
+    }
+
+    private var foregroundColor: Color {
+        if !isEnabled {
+            #if os(iOS)
+            return Color(.quaternaryLabel)
+            #elseif os(macOS)
+            return Color.secondary.opacity(0.38)
+            #else
+            return Color.secondary.opacity(0.38)
+            #endif
+        }
+        return configuration.isPressed ? .primary : .secondary
+    }
+}
 
 enum ImportHUDNotificationKeys {
     static let loading = "isLoading"

@@ -32,6 +32,7 @@
 "ui.dev.console" = "Console";
 "ui.section.source" = "Source";
 "ui.section.output" = "Output";
+"ui.placeholder.source_input" = "Enter text to translate.";
 "ui.action.paste" = "Paste";
 "ui.action.import" = "Import";
 "ui.import.files" = "Files";
@@ -50,3 +51,5 @@
 "status.notice.same_language_untranslatable" = "Could not translate because source and target are the same language.";
 "status.notice.ai_fallback_to_tf" = "AI translation could not complete, so machine translation was used.";
 "status.notice.unknown_source_language" = "Could not translate because the source language could not be detected.";
+
+"ui.action.share" = "Share";

@@ -60,11 +60,13 @@ final class TranslationViewModel: ObservableObject {
     private enum AppStateKey {
         static let targetLanguage = "appState.targetLanguage"
         static let experimentMode = "appState.experimentMode"
+        static let recentTargetLanguages = "appState.recentTargetLanguages"
     }
 
     enum StatusNoticeKind: Equatable {
         case sameLanguageUntranslatable
         case aiFallbackToMachineTranslation
+        case aiFallbackToMachineTranslationUnavailable
         case unknownSourceLanguage
     }
 
@@ -170,6 +172,7 @@ final class TranslationViewModel: ObservableObject {
     private var tfMenuInputRefreshTask: Task<Void, Never>?
     private var tfMenuPreparationTargetLanguageCode: String?
     private var lastMenuSourceLanguageCode: String?
+    private var recentTargetLanguageCodes: [String]
 
     init(
         orchestrator: TranslationOrchestrator,
@@ -181,6 +184,7 @@ final class TranslationViewModel: ObservableObject {
         self.userDefaults = userDefaults
         self.iOSEnginePolicy = iOSEnginePolicy
         self.preferredLanguages = preferredLanguages
+        self.recentTargetLanguageCodes = userDefaults.stringArray(forKey: AppStateKey.recentTargetLanguages) ?? []
         self.experimentMode = TranslationExperimentMode(
             rawValue: userDefaults.string(forKey: AppStateKey.experimentMode) ?? ""
         ) ?? .segmented
@@ -266,6 +270,7 @@ final class TranslationViewModel: ObservableObject {
             ? AppleIntelligenceLanguageCatalog.supportedLanguageOptions()
             : AppleIntelligenceLanguageCatalog.translationFrameworkLanguageOptions()
         normalizeTargetLanguageSelection()
+        pruneRecentTargetLanguageCodes()
         refreshTFMenuAvailabilityIfNeeded()
     }
 
@@ -311,14 +316,31 @@ final class TranslationViewModel: ObservableObject {
             tfMenuUnsupportedHintMessage = unsupportedPairHintText(for: targetLanguageCode)
         case .supported:
             targetLanguage = targetLanguageCode
+            recordRecentTargetLanguageSelection(targetLanguageCode)
             tfMenuUnsupportedHintMessage = unsupportedPairHintTextIfNeeded()
             #if canImport(Translation)
             requestTFLanguagePackDownload(for: targetLanguageCode)
             #endif
         case .installed, .unknown:
             targetLanguage = targetLanguageCode
+            recordRecentTargetLanguageSelection(targetLanguageCode)
             tfMenuUnsupportedHintMessage = unsupportedPairHintTextIfNeeded()
         }
+    }
+
+    func recentTargetLanguageOptions(limit: Int = 4) -> [TargetLanguageOption] {
+        guard !targetLanguageOptions.isEmpty else { return [] }
+        guard limit > 0 else { return [] }
+
+        let optionByCode = Dictionary(uniqueKeysWithValues: targetLanguageOptions.map { ($0.code, $0) })
+        return recentTargetLanguageCodes
+            .prefix(limit)
+            .compactMap { optionByCode[$0] }
+    }
+
+    func remainingTargetLanguageOptionsExcludingRecent(limit: Int = 4) -> [TargetLanguageOption] {
+        let recentCodes = Set(recentTargetLanguageOptions(limit: limit).map(\.code))
+        return targetLanguageOptions.filter { !recentCodes.contains($0.code) }
     }
 
     func handleSourceTextEdited(previousText: String, currentText: String) {
@@ -368,9 +390,26 @@ final class TranslationViewModel: ObservableObject {
     }
 
     func clearSourceTextAndResetLanguageState() {
+        resetTranslationRuntimeStateForClear()
         inputText = ""
+        translatedText = ""
+        segmentOutputs = []
+        segmentJoinersAfter = []
+        sourceSegments = []
+        sourceTextSnapshotForSegments = ""
+        traces = []
+        protectedTokens = []
+        glossaryMatches = []
+        ambiguityHints = []
+        engineName = ""
         detectedLanguageCode = ""
+        errorMessage = nil
+        userAlert = nil
+        statusNotices = []
+        status = .ready
+        aiLanguageSupported = true
         tfMenuUnsupportedHintMessage = nil
+        lastMenuSourceLanguageCode = nil
         refreshTFMenuAvailabilityIfNeeded()
     }
 
@@ -472,6 +511,23 @@ final class TranslationViewModel: ObservableObject {
         ) ?? targetLanguageOptions[0].code
     }
 
+    private func recordRecentTargetLanguageSelection(_ code: String) {
+        guard !code.isEmpty else { return }
+        recentTargetLanguageCodes.removeAll { $0 == code }
+        recentTargetLanguageCodes.insert(code, at: 0)
+        if recentTargetLanguageCodes.count > 8 {
+            recentTargetLanguageCodes = Array(recentTargetLanguageCodes.prefix(8))
+        }
+        persistRecentTargetLanguageSelections()
+    }
+
+    private func pruneRecentTargetLanguageCodes() {
+        guard !recentTargetLanguageCodes.isEmpty else { return }
+        let validCodes = Set(targetLanguageOptions.map(\.code))
+        recentTargetLanguageCodes = recentTargetLanguageCodes.filter { validCodes.contains($0) }
+        persistRecentTargetLanguageSelections()
+    }
+
     private func persistTargetLanguageSelection() {
         guard !targetLanguage.isEmpty else { return }
         userDefaults.set(targetLanguage, forKey: AppStateKey.targetLanguage)
@@ -479,6 +535,10 @@ final class TranslationViewModel: ObservableObject {
 
     private func persistExperimentModeSelection() {
         userDefaults.set(experimentMode.rawValue, forKey: AppStateKey.experimentMode)
+    }
+
+    private func persistRecentTargetLanguageSelections() {
+        userDefaults.set(recentTargetLanguageCodes, forKey: AppStateKey.recentTargetLanguages)
     }
 
     private static func preferredDefaultTargetLanguageCode(
@@ -1004,6 +1064,36 @@ final class TranslationViewModel: ObservableObject {
         activeMetricsFirstOutputAt = nil
     }
 
+    private func resetTranslationRuntimeStateForClear() {
+        let taskToDrain = activeTranslationTask
+        taskToDrain?.cancel()
+        activeTranslationTask = nil
+        activeTranslationToken = nil
+        isTranslating = false
+
+        if let taskToDrain {
+            Task { @MainActor [weak self] in
+                await taskToDrain.value
+                self?.appendDeveloperLog("clear: previous translation task drained")
+            }
+        }
+
+        pendingTranslationRequestStartedAt = nil
+        partialTranslationsBySegment = [:]
+        partialJoinersAfter = []
+        tfMenuAvailabilityTask?.cancel()
+        tfMenuAvailabilityTask = nil
+        tfMenuInputRefreshTask?.cancel()
+        tfMenuInputRefreshTask = nil
+        #if canImport(Translation)
+        tfMenuPreparationConfiguration = nil
+        tfMenuPreparationTargetLanguageCode = nil
+        tfMenuPreparationGeneration = UUID()
+        #endif
+        resetSessionMetricsState()
+        appendDeveloperLog("clear: runtime cache/session state reset")
+    }
+
     private func milliseconds(from start: Date?, to end: Date) -> String {
         guard let start else { return "(n/a)" }
         return String(format: "%.2f ms", end.timeIntervalSince(start) * 1_000)
@@ -1312,6 +1402,14 @@ final class TranslationViewModel: ObservableObject {
             noticeKinds.append(.aiFallbackToMachineTranslation)
         }
 
+        let tfRecoveryUnavailableAfterAIFallback = request.usesAITranslation
+            && output.segmentOutputs.contains(where: { $0.isUnsafeFallback && !$0.isUnsafeRecoveredByTranslationFramework })
+            && !output.segmentOutputs.contains(where: \.isUnsafeRecoveredByTranslationFramework)
+            && output.analysis.engineName != "same-language-fallback"
+        if tfRecoveryUnavailableAfterAIFallback {
+            noticeKinds.append(.aiFallbackToMachineTranslationUnavailable)
+        }
+
         if detected == "und",
            output.translatedText == request.text,
            output.segmentOutputs.allSatisfy({ $0.isUnsafeFallback }) {
@@ -1340,6 +1438,15 @@ final class TranslationViewModel: ObservableObject {
                     defaultValue: "AI translation could not complete, so machine translation was used."
                 ),
                 style: .blue
+            )
+        case .aiFallbackToMachineTranslationUnavailable:
+            return StatusNotice(
+                markerText: "text",
+                text: localized(
+                    "status.notice.ai_fallback_to_tf",
+                    defaultValue: "AI translation could not complete, so machine translation was used."
+                ),
+                style: .orange
             )
         case .unknownSourceLanguage:
             return StatusNotice(

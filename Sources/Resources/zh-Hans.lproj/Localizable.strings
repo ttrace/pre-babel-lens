@@ -32,6 +32,7 @@
 "ui.dev.console" = "控制台";
 "ui.section.source" = "源文本";
 "ui.section.output" = "输出";
+"ui.placeholder.source_input" = "请输入要翻译的文本";
 "ui.action.paste" = "粘贴";
 "ui.action.import" = "导入";
 "ui.import.files" = "文件";
@@ -50,3 +51,5 @@
 "status.notice.same_language_untranslatable" = "源语言和目标语言相同，无法翻译。";
 "status.notice.ai_fallback_to_tf" = "AI 翻译未能完成，已改用机器翻译。";
 "status.notice.unknown_source_language" = "无法检测源语言，无法翻译。";
+
+"ui.action.share" = "分享";
